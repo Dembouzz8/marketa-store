@@ -1,32 +1,28 @@
 import type { Metadata } from "next"
+import { Inter } from "next/font/google"
 
-import { CartSidebar } from "@/components/cart-sidebar"
-import { Footer } from "@/components/footer"
-import { Navbar } from "@/components/navbar"
 import { Providers } from "@/components/providers"
 import { Toaster } from "@/components/ui/toaster"
 
 import "./globals.css"
 
+const inter = Inter({ subsets: ["latin"] })
+
 export const metadata: Metadata = {
   title: "Marketa — Nigeria's Premium Marketplace",
-  description:
-    "Shop unique products from verified vendors across Nigeria. Fast delivery, secure payments.",
+  description: "Shop unique products from verified vendors across Nigeria.",
 }
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode
-}>) {
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-white font-sans text-zinc-900 antialiased">
+      <body className={`${inter.className} bg-white text-zinc-900 min-h-screen`}>
         <Providers>
-          <Navbar />
-          <CartSidebar />
-          <main>{children}</main>
-          <Footer />
+          {children}
           <Toaster />
         </Providers>
       </body>
