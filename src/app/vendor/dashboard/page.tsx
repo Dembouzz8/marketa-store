@@ -1,33 +1,31 @@
 import Link from "next/link"
-import {
-  Package,
-  ShoppingCart,
-  TrendingUp,
-  Wallet,
-} from "lucide-react"
+import { Package, ShoppingCart, TrendingUp, Wallet } from "lucide-react"
 import { redirect } from "next/navigation"
 
 import { StatsCard } from "@/components/vendor/stats-card"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
+import { supabaseAdmin } from "@/lib/supabase-server"
 import { cn, formatNaira } from "@/lib/utils"
 
-type DashboardOrderItem = {
+type ProductJoin = {
+  id: string
+  name: string
+  images: string[]
+}
+
+type VendorItemRow = {
+  id: string
   order_id: string
+  quantity: number
+  unit_price: number
   subtotal: number
-  orders:
-    | {
-        id: string
-        status: string
-        created_at: string
-        total_amount: number
-      }
-    | {
-        id: string
-        status: string
-        created_at: string
-        total_amount: number
-      }[]
-    | null
+  products: ProductJoin | ProductJoin[] | null
+}
+
+type OrderRow = {
+  id: string
+  status: string
+  created_at: string
 }
 
 type LedgerEntry = {
@@ -58,8 +56,8 @@ function getGreeting() {
   return "Good evening"
 }
 
-function getOrderObject(row: DashboardOrderItem) {
-  return Array.isArray(row.orders) ? row.orders[0] : row.orders
+function getProduct(item: VendorItemRow) {
+  return Array.isArray(item.products) ? item.products[0] : item.products
 }
 
 export default async function VendorDashboardPage() {
@@ -78,9 +76,9 @@ export default async function VendorDashboardPage() {
 
   if (!vendor) redirect("/vendor/login?error=not_a_vendor")
 
-  const { data: orderItemsData } = await supabase
+  const { data: vendorOrderItems } = await supabaseAdmin
     .from("order_items")
-    .select("order_id, subtotal, orders(id, status, created_at, total_amount)")
+    .select("order_id")
     .eq("vendor_id", vendor.id)
 
   const { data: ledgerData } = await supabase
@@ -94,9 +92,10 @@ export default async function VendorDashboardPage() {
     .eq("vendor_id", vendor.id)
     .eq("is_active", true)
 
-  const orderItems = (orderItemsData ?? []) as DashboardOrderItem[]
+  const uniqueOrderCount = new Set(
+    vendorOrderItems?.map((item) => item.order_id) ?? []
+  ).size
   const ledger = (ledgerData ?? []) as LedgerEntry[]
-  const uniqueOrders = new Set(orderItems.map((item) => item.order_id)).size
   const totalRevenue = ledger
     .filter((entry) => entry.type === "credit")
     .reduce((sum, entry) => sum + Number(entry.amount), 0)
@@ -105,28 +104,59 @@ export default async function VendorDashboardPage() {
     .reduce((sum, entry) => sum + Number(entry.amount), 0)
   const pendingPayout = totalRevenue - totalDebits
 
-  const recentOrders = Array.from(
-    orderItems
-      .reduce((map, item) => {
-        const order = getOrderObject(item)
-        if (!order) return map
-
-        const existing = map.get(item.order_id)
-        map.set(item.order_id, {
-          id: order.id,
-          status: order.status,
-          created_at: order.created_at,
-          amount: (existing?.amount ?? 0) + Number(item.subtotal),
-        })
-        return map
-      }, new Map<string, { id: string; status: string; created_at: string; amount: number }>())
-      .values()
-  )
-    .sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  const { data: vendorItemsData } = await supabaseAdmin
+    .from("order_items")
+    .select(
+      `
+      id,
+      order_id,
+      quantity,
+      unit_price,
+      subtotal,
+      products (
+        id,
+        name,
+        images
+      )
+    `
     )
-    .slice(0, 5)
+    .eq("vendor_id", vendor.id)
+
+  const vendorItems = (vendorItemsData ?? []) as VendorItemRow[]
+  const orderIds = [...new Set(vendorItems.map((item) => item.order_id))]
+  let orderRows: OrderRow[] = []
+
+  if (orderIds.length > 0) {
+    const { data: ordersData } = await supabaseAdmin
+      .from("orders")
+      .select("id, status, created_at")
+      .in("id", orderIds)
+      .order("created_at", { ascending: false })
+      .limit(5)
+
+    orderRows = (ordersData ?? []) as OrderRow[]
+  }
+
+  const recentOrders = orderRows.map((order) => {
+    const itemsForThisOrder = vendorItems.filter(
+      (item) => item.order_id === order.id
+    )
+    const vendorSubtotal = itemsForThisOrder.reduce(
+      (sum, item) => sum + Number(item.subtotal),
+      0
+    )
+    const productNames =
+      itemsForThisOrder
+        .map((item) => getProduct(item)?.name)
+        .filter(Boolean)
+        .join(", ") || "Products"
+
+    return {
+      ...order,
+      product_names: productNames,
+      vendor_amount: vendorSubtotal,
+    }
+  })
 
   return (
     <div className="space-y-8">
@@ -140,7 +170,7 @@ export default async function VendorDashboardPage() {
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatsCard
           title="Total Orders"
-          value={uniqueOrders.toLocaleString()}
+          value={uniqueOrderCount.toLocaleString()}
           subtitle="All vendor orders"
           icon={ShoppingCart}
           color="blue"
@@ -187,13 +217,13 @@ export default async function VendorDashboardPage() {
               <thead>
                 <tr className="border-b border-zinc-200 text-left">
                   <th className="pb-3 text-xs font-medium uppercase text-zinc-500">
-                    Order ID
+                    Products
                   </th>
                   <th className="pb-3 text-xs font-medium uppercase text-zinc-500">
                     Date
                   </th>
                   <th className="pb-3 text-xs font-medium uppercase text-zinc-500">
-                    Amount
+                    Your Earnings
                   </th>
                   <th className="pb-3 text-xs font-medium uppercase text-zinc-500">
                     Status
@@ -213,14 +243,16 @@ export default async function VendorDashboardPage() {
                 ) : (
                   recentOrders.map((order) => (
                     <tr key={order.id} className="border-b border-zinc-100">
-                      <td className="py-4 text-sm font-medium text-zinc-900">
-                        #{order.id.slice(0, 8)}
+                      <td className="py-4">
+                        <p className="line-clamp-1 text-sm font-medium text-zinc-900">
+                          {order.product_names}
+                        </p>
                       </td>
                       <td className="py-4 text-sm text-zinc-600">
                         {new Date(order.created_at).toLocaleDateString()}
                       </td>
                       <td className="py-4 text-sm font-semibold text-zinc-900">
-                        {formatNaira(order.amount)}
+                        {formatNaira(order.vendor_amount)}
                       </td>
                       <td className="py-4">
                         <span

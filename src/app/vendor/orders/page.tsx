@@ -2,31 +2,41 @@ import { redirect } from "next/navigation"
 
 import { OrdersTable } from "@/components/vendor/orders-table"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
-import type { VendorOrder } from "@/types"
+import { supabaseAdmin } from "@/lib/supabase-server"
 
-type JoinedOrder = {
-  id: string
-  customer_email: string
-  customer_phone: string | null
-  status: string
-  total_amount: number
-  payment_ref: string | null
-  shipping_address: VendorOrder["shipping_address"]
-  created_at: string
+type ShippingAddress = {
+  address?: string
+  city?: string
+  state?: string
 }
 
-type OrderItemRow = {
+type ProductJoin = {
+  id: string
+  name: string
+  images: string[]
+}
+
+type VendorItemRow = {
   id: string
   order_id: string
   quantity: number
   unit_price: number
   subtotal: number
-  product_id: string
-  orders: JoinedOrder | JoinedOrder[] | null
+  products: ProductJoin | ProductJoin[] | null
 }
 
-function getJoinedOrder(row: OrderItemRow) {
-  return Array.isArray(row.orders) ? row.orders[0] : row.orders
+type OrderRow = {
+  id: string
+  customer_email: string
+  customer_phone: string | null
+  status: string
+  payment_ref: string | null
+  shipping_address: ShippingAddress | null
+  created_at: string
+}
+
+function getProduct(item: VendorItemRow) {
+  return Array.isArray(item.products) ? item.products[0] : item.products
 }
 
 export default async function VendorOrdersPage() {
@@ -39,84 +49,96 @@ export default async function VendorOrdersPage() {
 
   const { data: vendor } = await supabase
     .from("vendors")
-    .select("id")
+    .select("id, name, platform_fee_pct")
     .eq("user_id", user.id)
     .single()
 
   if (!vendor) redirect("/vendor/login?error=not_a_vendor")
 
-  const { data: orderItemsData } = await supabase
+  const { data: vendorItemsData } = await supabaseAdmin
     .from("order_items")
     .select(
       `
       id,
       order_id,
-      product_id,
       quantity,
       unit_price,
       subtotal,
-      orders (
+      products (
         id,
-        customer_email,
-        customer_phone,
-        status,
-        total_amount,
-        payment_ref,
-        shipping_address,
-        created_at
+        name,
+        images
       )
     `
     )
     .eq("vendor_id", vendor.id)
-    .order("created_at", { ascending: false })
+  
+  console.log("vendor.id:", vendor.id)
+console.log("vendorItemsData count:", vendorItemsData?.length)
+console.log("vendorItemsData sample:", JSON.stringify(vendorItemsData?.[0], null, 2))
 
-  const orderMap = new Map<string, VendorOrder>()
-  const orderItems = (orderItemsData ?? []) as OrderItemRow[]
+  const vendorItems = (vendorItemsData ?? []) as VendorItemRow[]
+  const orderIds = [...new Set(vendorItems.map((item) => item.order_id))]
+  let orderRows: OrderRow[] = []
 
-  for (const item of orderItems) {
-    const order = getJoinedOrder(item)
-    if (!order) continue
+  if (orderIds.length > 0) {
+    const { data: ordersData } = await supabaseAdmin
+      .from("orders")
+      .select(
+        `
+        id,
+        customer_email,
+        customer_phone,
+        status,
+        shipping_address,
+        payment_ref,
+        created_at
+      `
+      )
+      .in("id", orderIds)
+      .order("created_at", { ascending: false })
 
-    if (!orderMap.has(order.id)) {
-      orderMap.set(order.id, {
-        id: order.id,
-        customer_email: order.customer_email,
-        customer_phone: order.customer_phone,
-        status: order.status,
-        total_amount: Number(order.total_amount),
-        payment_ref: order.payment_ref,
-        shipping_address: order.shipping_address ?? {},
-        created_at: order.created_at,
-        order_items: [],
-      })
-    }
-
-    orderMap.get(order.id)?.order_items.push({
-      id: item.id,
-      quantity: Number(item.quantity),
-      unit_price: Number(item.unit_price),
-      subtotal: Number(item.subtotal),
-      product_id: item.product_id,
-      products: {
-        name: "",
-        images: [],
-      },
-    })
+    orderRows = (ordersData ?? []) as OrderRow[]
   }
 
-  const orders = Array.from(orderMap.values()).sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  )
+  const vendorOrders = orderRows.map((order) => {
+    const itemsForThisOrder = vendorItems.filter(
+      (item) => item.order_id === order.id
+    )
+    const vendorSubtotal = itemsForThisOrder.reduce(
+      (sum, item) => sum + Number(item.subtotal),
+      0
+    )
+    const productNames =
+      itemsForThisOrder
+        .map((item) => getProduct(item)?.name)
+        .filter(Boolean)
+        .join(", ") || "Products"
+
+    return {
+      ...order,
+      shipping_address: order.shipping_address ?? {},
+      vendor_amount: vendorSubtotal,
+      product_names: productNames,
+      item_count: itemsForThisOrder.length,
+      order_items: itemsForThisOrder,
+    }
+  })
+  
+console.log("vendor.id:", vendor.id)
+console.log("vendorItems count:", vendorItems.length)
+console.log("orderIds:", orderIds)
+console.log("orderRows count:", orderRows.length)
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold text-zinc-900">Orders</h1>
         <span className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-zinc-900">
-          {orders.length} total
+          {vendorOrders.length} total
         </span>
       </div>
-      <OrdersTable orders={orders} />
+      <OrdersTable orders={vendorOrders} />
     </div>
   )
 }

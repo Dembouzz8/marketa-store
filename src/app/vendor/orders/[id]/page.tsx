@@ -4,16 +4,20 @@ import { redirect } from "next/navigation"
 import { Separator } from "@/components/ui/separator"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
 import { cn, formatNaira, getProductImage } from "@/lib/utils"
-import type { VendorOrder } from "@/types"
+
+type ShippingAddress = {
+  address?: string
+  city?: string
+  state?: string
+}
 
 type OrderDetail = {
   id: string
   customer_email: string
   customer_phone: string | null
   status: string
-  total_amount: number
   payment_ref: string | null
-  shipping_address: VendorOrder["shipping_address"] | null
+  shipping_address: ShippingAddress | null
   created_at: string
 }
 
@@ -70,13 +74,23 @@ export default async function VendorOrderDetailPage({
 
   const { data: orderData } = await supabase
     .from("orders")
-    .select("*")
+    .select(
+      `
+      id,
+      customer_email,
+      customer_phone,
+      status,
+      payment_ref,
+      shipping_address,
+      created_at
+    `
+    )
     .eq("id", id)
     .single()
 
   const { data: itemsData } = await supabase
     .from("order_items")
-    .select("*, products(name, images)")
+    .select("id, quantity, unit_price, subtotal, products(name, images)")
     .eq("order_id", id)
     .eq("vendor_id", vendor.id)
 
@@ -85,11 +99,12 @@ export default async function VendorOrderDetailPage({
 
   if (!order || items.length === 0) redirect("/vendor/orders")
 
-  const vendorSubtotal = items.reduce(
+  const vendorEarnings = items.reduce(
     (sum, item) => sum + Number(item.subtotal),
     0
   )
-  const earnings = vendorSubtotal * (1 - Number(vendor.platform_fee_pct) / 100)
+  const afterPlatformFee =
+    vendorEarnings * (1 - Number(vendor.platform_fee_pct) / 100)
   const address = order.shipping_address ?? {}
 
   return (
@@ -98,7 +113,7 @@ export default async function VendorOrderDetailPage({
         href="/vendor/orders"
         className="inline-flex text-sm font-medium text-zinc-500 hover:text-zinc-900"
       >
-        ← Back to Orders
+        &lt;- Back to Orders
       </Link>
 
       <div>
@@ -192,7 +207,7 @@ export default async function VendorOrderDetailPage({
                       {product?.name ?? "Product"}
                     </p>
                     <p className="mt-1 text-xs text-zinc-500">
-                      Qty {item.quantity} × {formatNaira(item.unit_price)}
+                      Qty {item.quantity} x {formatNaira(item.unit_price)}
                     </p>
                   </div>
                   <p className="text-sm font-semibold text-zinc-900">
@@ -207,25 +222,19 @@ export default async function VendorOrderDetailPage({
 
           <div className="space-y-3 text-sm">
             <div className="flex justify-between gap-4">
-              <span className="text-zinc-500">Order total</span>
+              <span className="text-zinc-500">Your Earnings</span>
               <span className="font-semibold text-zinc-900">
-                {formatNaira(order.total_amount)}
+                {formatNaira(vendorEarnings)}
               </span>
             </div>
             <div className="flex justify-between gap-4">
-              <span className="text-zinc-500">Your items subtotal</span>
-              <span className="font-semibold text-zinc-900">
-                {formatNaira(vendorSubtotal)}
-              </span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-zinc-500">Your earnings</span>
+              <span className="text-zinc-500">After platform fee</span>
               <span className="font-bold text-emerald-600">
-                {formatNaira(earnings)}
+                {formatNaira(afterPlatformFee)}
               </span>
             </div>
             <p className="text-right text-xs text-zinc-500">
-              after {vendor.platform_fee_pct}% platform fee
+              Platform fee: {vendor.platform_fee_pct}%
             </p>
           </div>
         </section>

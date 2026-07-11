@@ -6,10 +6,19 @@ import { useMemo, useState } from "react"
 
 import { Input } from "@/components/ui/input"
 import { cn, formatNaira } from "@/lib/utils"
-import type { VendorOrder } from "@/types"
+
+type VendorOrdersTableOrder = {
+  id: string
+  customer_email: string
+  status: string
+  created_at: string
+  vendor_amount: number
+  product_names: string
+  item_count: number
+}
 
 interface OrdersTableProps {
-  orders: VendorOrder[]
+  orders: VendorOrdersTableOrder[]
 }
 
 const statuses = ["All", "Pending", "Confirmed", "Fulfilled", "Cancelled"]
@@ -34,7 +43,8 @@ export function OrdersTable({ orders }: OrdersTableProps) {
       const matchesSearch =
         !search ||
         order.id.toLowerCase().includes(search) ||
-        order.customer_email.toLowerCase().includes(search)
+        order.customer_email.toLowerCase().includes(search) ||
+        order.product_names.toLowerCase().includes(search)
       const matchesStatus =
         status === "All" ||
         order.status.toLowerCase() === status.toLowerCase()
@@ -51,7 +61,7 @@ export function OrdersTable({ orders }: OrdersTableProps) {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search orders or customers"
+            placeholder="Search orders or products"
             className="h-10 rounded-lg border-zinc-200 pl-10"
           />
         </div>
@@ -84,16 +94,16 @@ export function OrdersTable({ orders }: OrdersTableProps) {
             <thead>
               <tr className="border-b border-zinc-200 text-left">
                 <th className="px-3 py-3 text-xs font-medium uppercase text-zinc-500">
-                  Order
+                  Products
                 </th>
                 <th className="px-3 py-3 text-xs font-medium uppercase text-zinc-500">
-                  Customer
+                  Date
                 </th>
                 <th className="px-3 py-3 text-xs font-medium uppercase text-zinc-500">
                   Items
                 </th>
                 <th className="px-3 py-3 text-xs font-medium uppercase text-zinc-500">
-                  Amount
+                  Your Earnings
                 </th>
                 <th className="px-3 py-3 text-xs font-medium uppercase text-zinc-500">
                   Status
@@ -107,21 +117,22 @@ export function OrdersTable({ orders }: OrdersTableProps) {
               {filteredOrders.map((order) => (
                 <tr key={order.id} className="border-b border-zinc-100">
                   <td className="px-3 py-4">
-                    <p className="text-sm font-medium text-zinc-900">
+                    <p className="line-clamp-1 text-sm font-medium text-zinc-900">
+                      {order.product_names}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-zinc-400">
                       #{order.id.slice(0, 8)}
                     </p>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      {new Date(order.created_at).toLocaleDateString()}
-                    </p>
+                  </td>
+                  <td className="px-3 py-4 text-sm text-zinc-600">
+                    {new Date(order.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-3 py-4 text-sm text-zinc-900">
-                    {order.customer_email}
-                  </td>
-                  <td className="px-3 py-4 text-sm text-zinc-900">
-                    {order.order_items.length}
+                    {order.item_count}{" "}
+                    {order.item_count === 1 ? "item" : "items"}
                   </td>
                   <td className="px-3 py-4 text-sm font-semibold text-zinc-900">
-                    {formatNaira(order.total_amount)}
+                    {formatNaira(order.vendor_amount)}
                   </td>
                   <td className="px-3 py-4">
                     <span

@@ -1,47 +1,42 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { createBrowserClient } from "@supabase/ssr"
 import { Eye, EyeOff, Loader2, Lock, Mail, ShoppingBag } from "lucide-react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
-import { supabase } from "@/lib/supabase"
 
-function VendorLoginContent() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
+export default function VendorLoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (searchParams.get("error") === "not_a_vendor") {
-      setError("This account is not registered as a vendor.")
-    }
-  }, [searchParams])
-
-  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setIsLoading(true)
     setError(null)
 
-    const { error: loginError } = await supabase.auth.signInWithPassword({
+    const { error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
 
-    if (loginError) {
-      setError(loginError.message)
+    if (signInError) {
+      setError(signInError.message)
       setIsLoading(false)
       return
     }
 
-    router.push("/vendor/dashboard")
-    router.refresh()
+    window.location.href = "/vendor/dashboard"
   }
 
   return (
@@ -57,7 +52,7 @@ function VendorLoginContent() {
 
         <Separator className="my-6" />
 
-        <form className="space-y-4" onSubmit={handleLogin}>
+        <form className="space-y-4" onSubmit={handleSubmit}>
           <label className="block">
             <span className="mb-2 block text-sm font-medium text-zinc-700">
               Email
@@ -122,13 +117,5 @@ function VendorLoginContent() {
         </form>
       </div>
     </div>
-  )
-}
-
-export default function VendorLoginPage() {
-  return (
-    <Suspense>
-      <VendorLoginContent />
-    </Suspense>
   )
 }
