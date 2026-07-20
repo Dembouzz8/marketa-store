@@ -5,8 +5,18 @@ import { Wallet } from "lucide-react"
 import { cn, formatNaira } from "@/lib/utils"
 import type { PayoutLedgerEntry } from "@/types"
 
+type EnrichedPayoutLedgerEntry = PayoutLedgerEntry & {
+  product_names?: string | null
+}
+
+const dateFormatter = new Intl.DateTimeFormat("en-NG", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+})
+
 interface PayoutTableProps {
-  entries: PayoutLedgerEntry[]
+  entries: EnrichedPayoutLedgerEntry[]
   balance: number
 }
 
@@ -117,10 +127,23 @@ export function PayoutTable({ entries, balance }: PayoutTableProps) {
                 {rows.map(({ entry, runningBalance: rowBalance }) => (
                   <tr key={entry.id} className="border-b border-zinc-100">
                     <td className="px-3 py-4 text-sm text-zinc-900">
-                      {new Date(entry.created_at).toLocaleDateString()}
+                      {dateFormatter.format(new Date(entry.created_at))}
                     </td>
                     <td className="px-3 py-4 text-sm text-zinc-900">
-                      {entry.description ?? entry.reference}
+                      {entry.product_names ? (
+                        <div>
+                          <p className="font-semibold text-zinc-900">
+                            {entry.product_names}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {entry.type === "credit"
+                              ? "Sale credit"
+                              : "Refund reversal"}
+                          </p>
+                        </div>
+                      ) : (
+                        entry.description ?? entry.reference
+                      )}
                     </td>
                     <td className="px-3 py-4 font-mono text-xs text-zinc-500">
                       {entry.order_id ? `#${entry.order_id.slice(0, 8)}` : "-"}
