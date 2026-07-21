@@ -1,30 +1,27 @@
 import Link from "next/link"
 import { ShoppingBag } from "lucide-react"
 
-const categoryLinks = [
-  "Fashion",
-  "Electronics",
-  "Food & Drinks",
-  "Beauty",
-  "Home & Living",
-  "Sports",
+interface FooterLink {
+  href: string
+  label: string
+}
+
+const shopLinks: FooterLink[] = [
+  { href: "/products", label: "Products" },
+  { href: "/products", label: "Categories" },
+  { href: "/vendors", label: "Vendors" },
 ]
 
-const vendorLinks = [
-  "Become a Vendor",
-  "Vendor Login",
-  "Seller Guide",
-  "Commission Rates",
+const sellLinks: FooterLink[] = [
+  { href: "/sell-with-us", label: "Sell With Us" },
+  { href: "/vendor/login", label: "Vendor Login" },
+  { href: "/sell-with-us#seller-guide", label: "Seller Guide" },
+  { href: "/sell-with-us#commission", label: "Commission Rates" },
 ]
 
-const supportLinks = [
-  "Help Center",
-  "Track Order",
-  "Returns Policy",
-  "Contact Us",
+const companyLinks: FooterLink[] = [
+  { href: "/about", label: "About Marketa" },
 ]
-
-const socialLinks = ["X", "IG", "f", "in"]
 
 export function Footer() {
   return (
@@ -39,27 +36,15 @@ export function Footer() {
             <p className="mt-4 max-w-xs text-sm leading-6">
               Nigeria&apos;s premium multi-vendor marketplace.
             </p>
-            <div className="mt-5 flex gap-3">
-              {socialLinks.map((social) => (
-                <Link
-                  key={social}
-                  href="#"
-                  className="flex size-9 items-center justify-center rounded-full bg-zinc-800 text-xs font-semibold text-zinc-600 transition-colors hover:text-zinc-300"
-                  aria-label={social}
-                >
-                  {social}
-                </Link>
-              ))}
-            </div>
           </div>
 
-          <FooterColumn title="Shop" links={categoryLinks} />
-          <FooterColumn title="Vendors" links={vendorLinks} />
-          <FooterColumn title="Support" links={supportLinks} />
+          <FooterColumn title="Shop" links={shopLinks} />
+          <FooterColumn title="Sell" links={sellLinks} />
+          <FooterColumn title="Company" links={companyLinks} />
         </div>
 
         <div className="mt-12 flex flex-col gap-4 border-t border-zinc-800 pt-8 md:flex-row md:items-center md:justify-between">
-          <p className="text-sm">© 2025 Marketa. All rights reserved.</p>
+          <p className="text-sm">&copy; 2025 Marketa. All rights reserved.</p>
           <div className="flex gap-2">
             {["Visa", "Mastercard", "Paystack"].map((method) => (
               <span
@@ -76,18 +61,18 @@ export function Footer() {
   )
 }
 
-function FooterColumn({ title, links }: { title: string; links: string[] }) {
+function FooterColumn({ title, links }: { title: string; links: FooterLink[] }) {
   return (
     <div>
       <h3 className="font-semibold text-white">{title}</h3>
       <ul className="mt-4 space-y-3">
         {links.map((link) => (
-          <li key={link}>
+          <li key={link.label}>
             <Link
-              href="#"
+              href={link.href}
               className="text-sm transition-colors hover:text-white"
             >
-              {link}
+              {link.label}
             </Link>
           </li>
         ))}
