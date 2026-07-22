@@ -6,7 +6,6 @@ import { useState } from "react"
 
 import { CheckoutModal } from "@/components/checkout-modal"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { useCartStore } from "@/lib/store"
@@ -28,9 +27,9 @@ export function CartSidebar() {
         <SheetContent
           side="right"
           showCloseButton={false}
-          className="w-full gap-0 bg-white p-0 sm:max-w-[400px]"
+          className="h-[100dvh] max-h-[100dvh] w-full gap-0 overflow-hidden bg-white p-0 sm:max-w-[400px]"
         >
-          <div className="flex items-center justify-between border-b border-zinc-200 p-4">
+          <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4">
             <div className="flex items-center gap-2">
               <ShoppingBag className="size-5 text-amber-500" />
               <h2 className="text-lg font-semibold text-zinc-900">
@@ -51,7 +50,7 @@ export function CartSidebar() {
           </div>
 
           {items.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto overscroll-contain px-6 text-center touch-pan-y [-webkit-overflow-scrolling:touch]">
               <ShoppingBag className="size-20 text-zinc-200" />
               <h3 className="mt-6 text-lg font-semibold text-zinc-900">
                 Your cart is empty
@@ -69,8 +68,8 @@ export function CartSidebar() {
             </div>
           ) : (
             <>
-              <ScrollArea className="flex-1 px-4">
-                <div className="space-y-4 py-4">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 touch-pan-y [-webkit-overflow-scrolling:touch]">
+                <div className="space-y-4 py-4 pb-6">
                   {items.map((item) => (
                     <div key={item.product.id}>
                       <div className="flex gap-3">
@@ -137,9 +136,9 @@ export function CartSidebar() {
                     </div>
                   ))}
                 </div>
-              </ScrollArea>
+              </div>
 
-              <div className="sticky bottom-0 space-y-4 border-t border-zinc-200 bg-white p-4">
+              <div className="shrink-0 space-y-4 border-t border-zinc-200 bg-white px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-zinc-500">Subtotal</span>
                   <span className="text-lg font-bold text-zinc-900">
