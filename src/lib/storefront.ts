@@ -59,3 +59,13 @@ export function categoryMatchesSlug(value: string, slug: string): boolean {
     (CATEGORY_ALIASES[slug]?.includes(normalizedValue) ?? false)
   )
 }
+
+export function getCategoryDatabaseValues(slug: string): string[] {
+  const category = STORE_CATEGORIES.find((item) => item.slug === slug)
+
+  if (!category) {
+    return []
+  }
+
+  return [category.name, ...(CATEGORY_ALIASES[slug] ?? [])]
+}

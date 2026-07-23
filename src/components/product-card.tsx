@@ -13,6 +13,7 @@ import type { Product } from "@/types"
 interface ProductCardProps {
   product: Product
   index: number
+  vendorName?: string
 }
 
 function getStockBadge(product: Product) {
@@ -36,7 +37,7 @@ function getStockBadge(product: Product) {
   }
 }
 
-export function ProductCard({ product, index }: ProductCardProps) {
+export function ProductCard({ product, index, vendorName }: ProductCardProps) {
   const router = useRouter()
   const addItem = useCartStore((state) => state.addItem)
   const stockBadge = getStockBadge(product)
@@ -64,13 +65,13 @@ export function ProductCard({ product, index }: ProductCardProps) {
         boxShadow:
           "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
       }}
-      onClick={() => router.push(`/product/${product.id}`)}
+      onClick={() => router.push(`/products/${product.id}`)}
       className="cursor-pointer overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-sm transition-shadow"
       role="link"
       tabIndex={0}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
-          router.push(`/product/${product.id}`)
+          router.push(`/products/${product.id}`)
         }
       }}
     >
@@ -105,6 +106,11 @@ export function ProductCard({ product, index }: ProductCardProps) {
         <h3 className="line-clamp-1 text-base font-semibold text-zinc-900">
           {product.name}
         </h3>
+        {vendorName && (
+          <p className="mt-1 line-clamp-1 text-xs font-medium text-zinc-600">
+            Sold by {vendorName}
+          </p>
+        )}
         <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500">
           {product.description ?? "Premium product from a verified vendor"}
         </p>

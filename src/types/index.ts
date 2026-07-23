@@ -11,6 +11,16 @@ export interface Product {
   created_at: string
 }
 
+export interface CatalogueVendor {
+  id: string
+  name: string
+}
+
+export interface CatalogueProduct {
+  product: Product
+  vendor: CatalogueVendor
+}
+
 export interface CartItem {
   product: Product
   quantity: number

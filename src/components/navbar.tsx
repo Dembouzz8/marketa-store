@@ -2,7 +2,13 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { type FormEvent, useEffect, useRef, useState } from "react"
+import {
+  type FormEvent,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import { motion } from "framer-motion"
 import { Menu, Search, ShoppingBag, ShoppingCart } from "lucide-react"
 
@@ -23,6 +29,24 @@ const navLinks = [
   { href: "/about", label: "About" },
 ]
 
+function subscribeToCartHydration(onStoreChange: () => void) {
+  const unsubscribeHydrate = useCartStore.persist.onHydrate(onStoreChange)
+  const unsubscribeFinish = useCartStore.persist.onFinishHydration(onStoreChange)
+
+  return () => {
+    unsubscribeHydrate()
+    unsubscribeFinish()
+  }
+}
+
+function getCartHydrationSnapshot() {
+  return useCartStore.persist.hasHydrated()
+}
+
+function getServerCartHydrationSnapshot() {
+  return false
+}
+
 export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
@@ -33,6 +57,11 @@ export function Navbar() {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const totalItems = useCartStore((state) => state.totalItems())
   const setCartOpen = useCartStore((state) => state.setCartOpen)
+  const hasHydratedCart = useSyncExternalStore(
+    subscribeToCartHydration,
+    getCartHydrationSnapshot,
+    getServerCartHydrationSnapshot
+  )
 
   useEffect(() => {
     const handleScroll = () => {
@@ -126,7 +155,7 @@ export function Navbar() {
             aria-label="Open cart"
           >
             <ShoppingCart className="size-5" />
-            {totalItems > 0 && (
+            {hasHydratedCart && totalItems > 0 && (
               <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-zinc-900">
                 {totalItems}
               </span>
