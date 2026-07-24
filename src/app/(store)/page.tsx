@@ -12,6 +12,7 @@ import {
 
 import { Hero } from "@/components/hero"
 import { ProductCard } from "@/components/product-card"
+import { getActiveVendors } from "@/lib/catalogue"
 import { STORE_CATEGORIES } from "@/lib/storefront"
 import { supabase } from "@/lib/supabase"
 import type { Product } from "@/types"
@@ -78,32 +79,37 @@ async function getHomepageData(): Promise<{
   products: Product[]
   vendors: FeaturedVendor[]
 }> {
-  const [productsResult, vendorsResult] = await Promise.all([
-    supabase
-      .from("products")
-      .select("*")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(8),
-    supabase
-      .from("vendors")
-      .select("id, name")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(4),
-  ])
+  const activeVendors = await getActiveVendors()
 
-  if (productsResult.error) {
-    console.error("[homepage products] query failed:", productsResult.error)
+  if (activeVendors.length === 0) {
+    return { products: [], vendors: [] }
   }
 
-  if (vendorsResult.error) {
-    console.error("[homepage vendors] query failed:", vendorsResult.error)
+  const activeVendorIds = activeVendors.map((vendor) => vendor.id)
+  const productsResult = await supabase
+    .from("products")
+    .select(
+      "id, vendor_id, name, description, price, stock, category, images, is_active, created_at"
+    )
+    .eq("is_active", true)
+    .in("vendor_id", activeVendorIds)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+    .limit(8)
+
+  if (productsResult.error) {
+    console.error("[homepage products] query failed", {
+      message: productsResult.error.message,
+      code: productsResult.error.code,
+      details: productsResult.error.details,
+      hint: productsResult.error.hint,
+    })
+    throw new Error(`Unable to load homepage products: ${productsResult.error.message}`)
   }
 
   return {
     products: (productsResult.data ?? []) as Product[],
-    vendors: (vendorsResult.data ?? []) as FeaturedVendor[],
+    vendors: activeVendors.slice(0, 4) as FeaturedVendor[],
   }
 }
 
