@@ -1,13 +1,19 @@
 "use client"
 
-import Image from "next/image"
 import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react"
 import { useState } from "react"
 
 import { CheckoutModal } from "@/components/checkout-modal"
+import { ProductImage } from "@/components/product-image"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { useCartStore } from "@/lib/store"
 import { formatNaira, getProductImage } from "@/lib/utils"
 
@@ -29,15 +35,18 @@ export function CartSidebar() {
           showCloseButton={false}
           className="h-[100dvh] max-h-[100dvh] w-full gap-0 overflow-hidden bg-white p-0 sm:max-w-[400px]"
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 p-4">
+          <SheetHeader className="flex shrink-0 flex-row items-center justify-between space-y-0 border-b border-zinc-200 p-4 text-left">
             <div className="flex items-center gap-2">
               <ShoppingBag className="size-5 text-amber-500" />
-              <h2 className="text-lg font-semibold text-zinc-900">
+              <SheetTitle className="text-lg font-semibold text-zinc-900">
                 Your Cart
-              </h2>
+              </SheetTitle>
               <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-zinc-900">
                 {totalItems}
               </span>
+              <SheetDescription className="sr-only">
+                Review products in your cart and proceed to checkout.
+              </SheetDescription>
             </div>
             <button
               type="button"
@@ -47,7 +56,7 @@ export function CartSidebar() {
             >
               <X className="size-5" />
             </button>
-          </div>
+          </SheetHeader>
 
           {items.length === 0 ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto overscroll-contain px-6 text-center touch-pan-y [-webkit-overflow-scrolling:touch]">
@@ -73,7 +82,7 @@ export function CartSidebar() {
                   {items.map((item) => (
                     <div key={item.product.id}>
                       <div className="flex gap-3">
-                        <Image
+                        <ProductImage
                           src={getProductImage(item.product.images)}
                           alt={item.product.name}
                           width={48}
@@ -108,7 +117,7 @@ export function CartSidebar() {
                                   item.quantity - 1
                                 )
                               }
-                              className="flex size-7 items-center justify-center rounded bg-zinc-100 text-sm font-medium text-zinc-700"
+                              className="flex size-7 items-center justify-center rounded bg-zinc-100 text-sm font-medium text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                               aria-label="Decrease quantity"
                             >
                               <Minus className="size-3.5" />
@@ -124,8 +133,9 @@ export function CartSidebar() {
                                   item.quantity + 1
                                 )
                               }
-                              className="flex size-7 items-center justify-center rounded bg-zinc-100 text-sm font-medium text-zinc-700"
+                              className="flex size-7 items-center justify-center rounded bg-zinc-100 text-sm font-medium text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                               aria-label="Increase quantity"
+                              disabled={item.quantity >= item.product.stock}
                             >
                               <Plus className="size-3.5" />
                             </button>
@@ -151,7 +161,10 @@ export function CartSidebar() {
                 <Separator />
                 <Button
                   type="button"
-                  onClick={() => setIsCheckoutOpen(true)}
+                  onClick={() => {
+                    setCartOpen(false)
+                    setIsCheckoutOpen(true)
+                  }}
                   className="h-auto w-full rounded-lg bg-amber-500 py-3 font-semibold text-zinc-900 hover:bg-amber-400"
                 >
                   Proceed to Checkout

@@ -1,8 +1,8 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { ArrowRight, ShoppingBag, Store } from "lucide-react"
+import { ArrowRight, Store } from "lucide-react"
 
-import { supabase } from "@/lib/supabase"
+import { getActiveVendors } from "@/lib/catalogue"
 
 export const dynamic = "force-dynamic"
 
@@ -11,54 +11,8 @@ export const metadata: Metadata = {
   description: "Discover active sellers on the Marketa marketplace.",
 }
 
-interface VendorSummary {
-  id: string
-  name: string
-}
-
-type VendorDirectoryResult =
-  | { status: "ready"; vendors: VendorSummary[] }
-  | { status: "empty"; vendors: [] }
-  | { status: "unavailable"; vendors: [] }
-
-async function getActiveVendors(): Promise<VendorDirectoryResult> {
-  try {
-    const { data, error } = await supabase
-      .from("vendors")
-      .select("id, name")
-      .eq("is_active", true)
-      .order("name", { ascending: true })
-
-    if (error) {
-      console.error("[vendors] query failed:", error.message)
-      return { status: "unavailable", vendors: [] }
-    }
-
-    const vendors = (data ?? []).flatMap((vendor) => {
-      if (
-        typeof vendor.id !== "string" ||
-        typeof vendor.name !== "string" ||
-        !vendor.name.trim()
-      ) {
-        return []
-      }
-
-      return [{ id: vendor.id, name: vendor.name.trim() }]
-    })
-
-    if (vendors.length === 0) {
-      return { status: "empty", vendors: [] }
-    }
-
-    return { status: "ready", vendors }
-  } catch (error) {
-    console.error("[vendors] query failed:", error)
-    return { status: "unavailable", vendors: [] }
-  }
-}
-
 export default async function VendorsPage() {
-  const directory = await getActiveVendors()
+  const vendors = await getActiveVendors()
 
   return (
     <main className="bg-white">
@@ -110,9 +64,9 @@ export default async function VendorsPage() {
             </p>
           </div>
 
-          {directory.status === "ready" ? (
+          {vendors.length > 0 ? (
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {directory.vendors.map((vendor) => (
+              {vendors.map((vendor) => (
                 <article
                   key={vendor.id}
                   className="rounded-xl border border-zinc-100 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
@@ -136,21 +90,14 @@ export default async function VendorsPage() {
           ) : (
             <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-6 py-12 text-center">
               <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-white text-zinc-400 shadow-sm">
-                {directory.status === "unavailable" ? (
-                  <ShoppingBag className="size-7" aria-hidden="true" />
-                ) : (
-                  <Store className="size-7" aria-hidden="true" />
-                )}
+                <Store className="size-7" aria-hidden="true" />
               </div>
               <h2 className="mt-5 text-xl font-semibold text-zinc-900">
-                {directory.status === "unavailable"
-                  ? "Seller directory unavailable"
-                  : "No active sellers to show yet"}
+                No active sellers to show yet
               </h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-600">
-                {directory.status === "unavailable"
-                  ? "We could not load the seller directory right now. You can still explore available products."
-                  : "There are no active seller profiles available at the moment. Check back as the marketplace grows."}
+                There are no active seller profiles available at the moment.
+                Check back as the marketplace grows.
               </p>
               <Link
                 href="/products"

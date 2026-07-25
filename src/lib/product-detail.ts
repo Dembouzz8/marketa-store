@@ -1,4 +1,9 @@
 import { getActiveVendors } from "@/lib/catalogue"
+import {
+  categoryMatchesSlug,
+  getCategoryDatabaseValues,
+  STORE_CATEGORIES,
+} from "@/lib/storefront"
 import { supabase } from "@/lib/supabase"
 import type { CatalogueProduct, Product } from "@/types"
 
@@ -68,11 +73,18 @@ export async function getProductDetail(id: string): Promise<{
 
   let related: CatalogueProduct[] = []
   if (product.category) {
+    const categorySlug = STORE_CATEGORIES.find((category) =>
+      categoryMatchesSlug(product.category!, category.slug)
+    )?.slug
+    const categoryValues = categorySlug
+      ? getCategoryDatabaseValues(categorySlug)
+      : [product.category]
+
     const relatedResult = await supabase
       .from("products")
       .select(PRODUCT_FIELDS)
       .eq("is_active", true)
-      .eq("category", product.category)
+      .or(categoryValues.map((value) => `category.ilike.${value}`).join(","))
       .in("vendor_id", activeVendorIds)
       .neq("id", product.id)
       .order("created_at", { ascending: false })

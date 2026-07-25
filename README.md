@@ -1,6 +1,6 @@
 # Marketa Storefront
 
-Marketa is a premium multi-vendor marketplace storefront for Nigerian vendors. It lists active products from Supabase, lets shoppers filter categories, manage a persisted cart, and submit checkout payloads to an n8n/Paystack workflow.
+Marketa is a premium multi-vendor marketplace storefront for Nigerian vendors. It lists active products from Supabase, lets shoppers filter categories, manage a persisted cart, and submit checkout payloads to a Supabase Edge Function.
 
 ## Tech Stack
 
@@ -27,7 +27,7 @@ Create `.env.local` in the project root:
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL=your_n8n_checkout_webhook_url
+NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL=https://your-project.supabase.co/functions/v1/handle-checkout
 ```
 
 Run the development server:
@@ -46,7 +46,13 @@ npm run build
 
 - `NEXT_PUBLIC_SUPABASE_URL`: Find this in Supabase under Project Settings > API > Project URL.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Find this in Supabase under Project Settings > API > Project API keys > anon public.
-- `NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL`: Use the production webhook URL from the n8n workflow that creates a Paystack transaction and returns `authorization_url`.
+- `NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL`: Use the public URL of the Supabase `handle-checkout` Edge Function. That function validates the current order data, creates the pending order, initializes the Paystack transaction, and returns `authorization_url`.
+
+Configure Paystack's webhook URL to point to the Supabase
+`paystack-webhook` Edge Function. That webhook is the server-side payment
+authority responsible for confirming Paystack events. n8n may handle
+downstream operational automation, but it does not initialize or confirm
+customer payment.
 
 ## Vendor Portal
 
@@ -147,7 +153,7 @@ values
     18500,
     12,
     'Fashion',
-    array['https://placehold.co/800x800/fef3c7/18181b?text=Adire+Tote'],
+    array[]::text[],
     true
   ),
   (
@@ -156,7 +162,7 @@ values
     42000,
     6,
     'Electronics',
-    array['https://placehold.co/800x800/e4e4e7/18181b?text=Earbuds'],
+    array[]::text[],
     true
   ),
   (
@@ -165,7 +171,7 @@ values
     9500,
     4,
     'Food',
-    array['https://placehold.co/800x800/fed7aa/18181b?text=Spice+Box'],
+    array[]::text[],
     true
   ),
   (
@@ -174,7 +180,7 @@ values
     26000,
     0,
     'Beauty',
-    array['https://placehold.co/800x800/fce7f3/18181b?text=Skincare'],
+    array[]::text[],
     true
   );
 ```

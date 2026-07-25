@@ -10,7 +10,7 @@ const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "Marketa — Nigeria's Premium Marketplace",
-  description: "Shop unique products from verified vendors across Nigeria.",
+  description: "Shop products from marketplace vendors across Nigeria.",
 }
 
 export default function RootLayout({

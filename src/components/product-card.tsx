@@ -1,9 +1,9 @@
 "use client"
 
-import Image from "next/image"
-import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
+import Link from "next/link"
 
+import { ProductImage } from "@/components/product-image"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/use-toast"
 import { useCartStore } from "@/lib/store"
@@ -38,7 +38,6 @@ function getStockBadge(product: Product) {
 }
 
 export function ProductCard({ product, index, vendorName }: ProductCardProps) {
-  const router = useRouter()
   const addItem = useCartStore((state) => state.addItem)
   const stockBadge = getStockBadge(product)
   const isOutOfStock = product.stock === 0
@@ -65,58 +64,57 @@ export function ProductCard({ product, index, vendorName }: ProductCardProps) {
         boxShadow:
           "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
       }}
-      onClick={() => router.push(`/products/${product.id}`)}
-      className="cursor-pointer overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-sm transition-shadow"
-      role="link"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          router.push(`/products/${product.id}`)
-        }
-      }}
+      className="overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-sm transition-shadow"
     >
-      <div className="relative aspect-square overflow-hidden">
-        <Image
-          src={getProductImage(product.images)}
-          alt={product.name}
-          fill
-          sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw"
-          className="object-cover"
-        />
-        {product.category && (
-          <span className="absolute left-3 top-3 rounded-full bg-zinc-800/80 px-2.5 py-1 text-xs text-white">
-            {product.category}
-          </span>
-        )}
-        <span
-          className={cn(
-            "absolute right-3 top-3 rounded-full px-2.5 py-1 text-xs",
-            stockBadge.className
+      <Link
+        href={`/products/${product.id}`}
+        className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500"
+      >
+        <div className="relative aspect-square overflow-hidden">
+          <ProductImage
+            src={getProductImage(product.images)}
+            alt={product.name}
+            fill
+            sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw"
+            className="object-cover"
+          />
+          {product.category && (
+            <span className="absolute left-3 top-3 rounded-full bg-zinc-800/80 px-2.5 py-1 text-xs text-white">
+              {product.category}
+            </span>
           )}
-        >
-          {stockBadge.label}
-        </span>
-        {isOutOfStock && (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/50 text-sm font-semibold text-white">
-            Out of Stock
-          </div>
-        )}
-      </div>
-      <div className="p-4">
-        <h3 className="line-clamp-1 text-base font-semibold text-zinc-900">
-          {product.name}
-        </h3>
-        {vendorName && (
-          <p className="mt-1 line-clamp-1 text-xs font-medium text-zinc-600">
-            Sold by {vendorName}
+          <span
+            className={cn(
+              "absolute right-3 top-3 rounded-full px-2.5 py-1 text-xs",
+              stockBadge.className
+            )}
+          >
+            {stockBadge.label}
+          </span>
+          {isOutOfStock && (
+            <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/50 text-sm font-semibold text-white">
+              Out of Stock
+            </div>
+          )}
+        </div>
+        <div className="px-4 pt-4">
+          <h3 className="line-clamp-1 text-base font-semibold text-zinc-900">
+            {product.name}
+          </h3>
+          {vendorName && (
+            <p className="mt-1 line-clamp-1 text-xs font-medium text-zinc-600">
+              Sold by {vendorName}
+            </p>
+          )}
+          <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500">
+            {product.description ?? "Product description not provided"}
           </p>
-        )}
-        <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500">
-          {product.description ?? "Premium product from a verified vendor"}
-        </p>
-        <p className="mt-2 text-lg font-bold text-amber-600">
-          {formatNaira(product.price)}
-        </p>
+          <p className="mt-2 text-lg font-bold text-amber-600">
+            {formatNaira(product.price)}
+          </p>
+        </div>
+      </Link>
+      <div className="p-4 pt-0">
         <Button
           type="button"
           onClick={handleAddToCart}

@@ -1,4 +1,5 @@
 import { Filter } from "lucide-react"
+import Link from "next/link"
 
 import { CatalogueMobileFilters } from "@/components/catalogue-mobile-filters"
 import { STORE_CATEGORIES } from "@/lib/storefront"
@@ -29,9 +30,9 @@ export function CatalogueFilters({
           <button className="min-h-11 w-full rounded-lg bg-zinc-900 px-4 text-sm font-semibold text-white hover:bg-zinc-700">
             Apply filters
           </button>
-          <a href="/products" className="flex min-h-11 items-center justify-center text-sm font-semibold text-zinc-600 hover:text-zinc-900">
+          <Link href="/products" className="flex min-h-11 items-center justify-center text-sm font-semibold text-zinc-600 hover:text-zinc-900">
             Clear all
-          </a>
+          </Link>
         </form>
       </aside>
     </>

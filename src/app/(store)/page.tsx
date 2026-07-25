@@ -33,7 +33,7 @@ const marketplaceBenefits = [
   },
   {
     icon: BadgeCheck,
-    title: "Verified Nigerian Vendors",
+    title: "Active Nigerian Vendors",
     description:
       "Discover products from Nigerian sellers brought together in one marketplace.",
   },

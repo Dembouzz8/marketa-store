@@ -44,7 +44,9 @@ export function Footer() {
         </div>
 
         <div className="mt-12 flex flex-col gap-4 border-t border-zinc-800 pt-8 md:flex-row md:items-center md:justify-between">
-          <p className="text-sm">&copy; 2025 Marketa. All rights reserved.</p>
+          <p className="text-sm">
+            &copy; {new Date().getFullYear()} Marketa. All rights reserved.
+          </p>
           <div className="flex gap-2">
             {["Visa", "Mastercard", "Paystack"].map((method) => (
               <span

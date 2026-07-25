@@ -13,7 +13,7 @@ import {
 
 const benefits = [
   { icon: ShieldCheck, label: "Secure Paystack Payments" },
-  { icon: Store, label: "Verified Nigerian Vendors" },
+  { icon: Store, label: "Nigerian Marketplace Vendors" },
   { icon: BellRing, label: "Order Updates" },
   { icon: Headphones, label: "Customer Support" },
 ]

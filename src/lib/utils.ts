@@ -14,9 +14,11 @@ export function formatNaira(amount: number): string {
   }).format(amount)
 }
 
+export const PRODUCT_IMAGE_FALLBACK = "/product-placeholder.svg"
+
 export function getProductImage(images: string[], index = 0): string {
   if (images && images.length > index && images[index]) {
     return images[index]
   }
-  return "https://placehold.co/400x400/f4f4f5/71717a?text=No+Image"
+  return PRODUCT_IMAGE_FALLBACK
 }
