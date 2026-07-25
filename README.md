@@ -54,6 +54,13 @@ authority responsible for confirming Paystack events. n8n may handle
 downstream operational automation, but it does not initialize or confirm
 customer payment.
 
+Deploy the guest-accessible `payment-status` Edge Function with JWT
+verification disabled. It performs a read-only status lookup using an exact
+order ID and payment reference and never returns private order data. Production
+deployments should add distributed rate limiting at the platform or gateway
+layer; this repository does not include suitable shared rate-limit
+infrastructure, and an in-memory Edge Function limiter would not be reliable.
+
 ## Vendor Portal
 
 The vendor dashboard is available at `/vendor/login`. Authenticated vendor users are redirected to `/vendor/dashboard`, while unauthenticated visitors are sent back to the login page.

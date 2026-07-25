@@ -26,6 +26,21 @@ serve(async (req) => {
 
     const body = await req.json()
     const { customer_email, customer_phone, items, shipping_address } = body
+    const storefrontUrl = Deno.env.get("STOREFRONT_URL")
+    let storefrontOrigin: URL
+
+    try {
+      storefrontOrigin = new URL(storefrontUrl ?? "")
+    } catch {
+      console.error("STOREFRONT_URL is missing or invalid")
+      return new Response(
+        JSON.stringify({ error: "Checkout is not configured" }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      )
+    }
 
     // ── Validate required fields ──────────────────────────────────────────
     if (!customer_email) {
@@ -143,6 +158,9 @@ serve(async (req) => {
     }
 
     // ── Initialize Paystack transaction ───────────────────────────────────
+    const callbackUrl = new URL("/payment-success", storefrontOrigin)
+    callbackUrl.searchParams.set("order", order.id)
+
     const paystackRes = await fetch(
       "https://api.paystack.co/transaction/initialize",
       {
@@ -155,7 +173,7 @@ serve(async (req) => {
           email: customer_email,
           amount: Math.round(totalAmount * 100), // Naira → kobo
           reference: idempotencyKey,
-          callback_url: `${Deno.env.get("STOREFRONT_URL")}/payment-success`,
+          callback_url: callbackUrl.toString(),
           metadata: {
             order_id: order.id,
             customer_phone: customer_phone || "",

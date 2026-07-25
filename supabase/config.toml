@@ -434,3 +434,9 @@ entrypoint = "./functions/paystack-webhook/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/paystack-webhook/*.html" ]
+
+[functions.payment-status]
+enabled = true
+verify_jwt = false
+import_map = "./functions/payment-status/deno.json"
+entrypoint = "./functions/payment-status/index.ts"

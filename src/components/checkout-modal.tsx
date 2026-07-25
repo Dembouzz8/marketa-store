@@ -23,6 +23,12 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
+import {
+  createCartFingerprint,
+  isOrderId,
+  isPaymentReference,
+  savePendingCheckout,
+} from "@/lib/payment-recovery"
 import { useCartStore } from "@/lib/store"
 import { cn, formatNaira } from "@/lib/utils"
 import type { CheckoutFormData, CheckoutPayload } from "@/types"
@@ -92,7 +98,6 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const items = useCartStore((state) => state.items)
-  const clearCart = useCartStore((state) => state.clearCart)
   const totalPrice = useCartStore((state) => state.totalPrice())
 
   const validateContact = () => {
@@ -185,11 +190,20 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         throw new Error(data.message ?? "Unable to start checkout.")
       }
 
-      if (!data.authorization_url) {
+      if (
+        !data.authorization_url ||
+        !isOrderId(data.order_id ?? "") ||
+        !isPaymentReference(data.reference ?? "")
+      ) {
         throw new Error("Checkout response did not include a payment URL.")
       }
 
-      clearCart()
+      savePendingCheckout({
+        order_id: data.order_id,
+        reference: data.reference,
+        cart_fingerprint: createCartFingerprint(items),
+        created_at: new Date().toISOString(),
+      })
       window.location.href = data.authorization_url
     } catch (paymentError) {
       const message =
