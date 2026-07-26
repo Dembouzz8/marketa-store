@@ -31,7 +31,12 @@ import {
 } from "@/lib/payment-recovery"
 import { useCartStore } from "@/lib/store"
 import { cn, formatNaira } from "@/lib/utils"
-import type { CheckoutFormData, CheckoutPayload } from "@/types"
+import type {
+  CheckoutErrorResponse,
+  CheckoutFormData,
+  CheckoutPayload,
+  CheckoutSuccessResponse,
+} from "@/types"
 
 interface CheckoutModalProps {
   open: boolean
@@ -80,6 +85,120 @@ const states = [
   "Zamfara",
 ]
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+class CheckoutUiError extends Error {}
+
+function normalizeWhitespace(value: string) {
+  return value.trim().replace(/\s+/g, " ")
+}
+
+function normalizeContact(formData: CheckoutFormData) {
+  return {
+    customer_name: normalizeWhitespace(formData.full_name),
+    customer_email: formData.customer_email.trim().toLowerCase(),
+    customer_phone: formData.customer_phone.replace(/\D/g, ""),
+  }
+}
+
+function isValidContact(formData: CheckoutFormData) {
+  const contact = normalizeContact(formData)
+  return (
+    contact.customer_name.length >= 2 &&
+    contact.customer_name.length <= 100 &&
+    contact.customer_email.length >= 3 &&
+    contact.customer_email.length <= 254 &&
+    EMAIL_PATTERN.test(contact.customer_email) &&
+    formData.customer_phone.trim().length <= 32 &&
+    contact.customer_phone.length >= 7 &&
+    contact.customer_phone.length <= 15
+  )
+}
+
+function normalizeShippingAddress(formData: CheckoutFormData) {
+  return {
+    address: normalizeWhitespace(formData.shipping_address.address),
+    city: normalizeWhitespace(formData.shipping_address.city),
+    state: formData.shipping_address.state.trim(),
+  }
+}
+
+function isValidShippingAddress(formData: CheckoutFormData) {
+  const address = normalizeShippingAddress(formData)
+  return (
+    address.address.length >= 5 &&
+    address.address.length <= 300 &&
+    address.city.length >= 2 &&
+    address.city.length <= 100 &&
+    states.includes(address.state)
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isCheckoutErrorResponse(value: unknown): value is CheckoutErrorResponse {
+  return (
+    isRecord(value) &&
+    value.ok === false &&
+    isRecord(value.error) &&
+    typeof value.error.code === "string" &&
+    typeof value.error.message === "string"
+  )
+}
+
+function isCheckoutSuccessResponse(
+  value: unknown
+): value is CheckoutSuccessResponse {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isRecord(value.data) &&
+    typeof value.data.order_id === "string" &&
+    typeof value.data.reference === "string" &&
+    typeof value.data.authorization_url === "string"
+  )
+}
+
+function safeAuthorizationUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+function checkoutErrorMessage(code: string): string {
+  switch (code) {
+    case "INSUFFICIENT_STOCK":
+      return "One or more products no longer have enough stock. Review your cart and try again."
+    case "PRODUCT_UNAVAILABLE":
+      return "One or more products are no longer available."
+    case "VENDOR_UNAVAILABLE":
+      return "One or more sellers are currently unavailable."
+    case "INVALID_CONTACT":
+      return "Check your name, email address and phone number."
+    case "INVALID_SHIPPING_ADDRESS":
+      return "Check your delivery address and state."
+    case "INVALID_ITEMS":
+    case "DUPLICATE_PRODUCT":
+      return "Review the products and quantities in your cart."
+    case "PAYMENT_INITIALIZATION_FAILED":
+    case "SERVICE_UNAVAILABLE":
+      return "Checkout is temporarily unavailable. Please try again."
+    case "UNSUPPORTED_MEDIA_TYPE":
+    case "PAYLOAD_TOO_LARGE":
+    case "INVALID_REQUEST":
+    case "INVALID_PRODUCT_PRICE":
+      return "Checkout could not be started. Review your order and try again."
+    default:
+      return "Checkout is temporarily unavailable. Please try again."
+  }
+}
+
 const initialFormData: CheckoutFormData = {
   full_name: "",
   customer_email: "",
@@ -100,32 +219,16 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   const items = useCartStore((state) => state.items)
   const totalPrice = useCartStore((state) => state.totalPrice())
 
-  const validateContact = () => {
-    return (
-      formData.full_name.trim() &&
-      formData.customer_email.trim() &&
-      formData.customer_phone.trim()
-    )
-  }
-
-  const validateDelivery = () => {
-    return (
-      formData.shipping_address.address.trim() &&
-      formData.shipping_address.city.trim() &&
-      formData.shipping_address.state.trim()
-    )
-  }
-
   const nextStep = () => {
     setError(null)
 
-    if (step === 1 && !validateContact()) {
-      setError("Please enter your full name, email, and phone number.")
+    if (step === 1 && !isValidContact(formData)) {
+      setError("Check your name, email address and phone number.")
       return
     }
 
-    if (step === 2 && !validateDelivery()) {
-      setError("Please complete your delivery address.")
+    if (step === 2 && !isValidShippingAddress(formData)) {
+      setError("Check your delivery address and state.")
       return
     }
 
@@ -156,17 +259,44 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   }
 
   const handlePayment = async () => {
+    if (!isValidContact(formData)) {
+      setError("Check your name, email address and phone number.")
+      return
+    }
+
+    if (!isValidShippingAddress(formData)) {
+      setError("Check your delivery address and state.")
+      return
+    }
+
+    const itemIds = items.map((item) => item.product.id.toLowerCase())
+    if (
+      items.length < 1 ||
+      items.length > 50 ||
+      new Set(itemIds).size !== itemIds.length ||
+      items.some(
+        (item) =>
+          !UUID_PATTERN.test(item.product.id) ||
+          !Number.isInteger(item.quantity) ||
+          item.quantity < 1 ||
+          item.quantity > 99
+      )
+    ) {
+      setError("Review the products and quantities in your cart.")
+      return
+    }
+
     setIsLoading(true)
     setError(null)
 
+    const contact = normalizeContact(formData)
     const payload: CheckoutPayload = {
-      customer_email: formData.customer_email,
-      customer_phone: formData.customer_phone,
+      ...contact,
       items: items.map((item) => ({
         product_id: item.product.id,
         quantity: item.quantity,
       })),
-      shipping_address: formData.shipping_address,
+      shipping_address: normalizeShippingAddress(formData),
     }
 
     try {
@@ -184,32 +314,38 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         body: JSON.stringify(payload),
       })
 
-      const data = await response.json().catch(() => ({}))
+      const data: unknown = await response.json().catch(() => null)
 
       if (!response.ok) {
-        throw new Error(data.message ?? "Unable to start checkout.")
+        const message = isCheckoutErrorResponse(data)
+          ? checkoutErrorMessage(data.error.code)
+          : "Checkout is temporarily unavailable. Please try again."
+        throw new CheckoutUiError(message)
       }
 
       if (
-        !data.authorization_url ||
-        !isOrderId(data.order_id ?? "") ||
-        !isPaymentReference(data.reference ?? "")
+        !isCheckoutSuccessResponse(data) ||
+        !isOrderId(data.data.order_id) ||
+        !isPaymentReference(data.data.reference) ||
+        !safeAuthorizationUrl(data.data.authorization_url)
       ) {
-        throw new Error("Checkout response did not include a payment URL.")
+        throw new CheckoutUiError(
+          "Checkout is temporarily unavailable. Please try again."
+        )
       }
 
       savePendingCheckout({
-        order_id: data.order_id,
-        reference: data.reference,
+        order_id: data.data.order_id,
+        reference: data.data.reference,
         cart_fingerprint: createCartFingerprint(items),
         created_at: new Date().toISOString(),
       })
-      window.location.href = data.authorization_url
+      window.location.href = data.data.authorization_url
     } catch (paymentError) {
       const message =
-        paymentError instanceof Error
+        paymentError instanceof CheckoutUiError
           ? paymentError.message
-          : "Unable to start checkout."
+          : "Checkout is temporarily unavailable. Please try again."
       setError(message)
       toast({
         title: "Checkout failed",

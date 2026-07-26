@@ -38,6 +38,7 @@ export interface CheckoutFormData {
 }
 
 export interface CheckoutPayload {
+  customer_name: string
   customer_email: string
   customer_phone: string
   items: { product_id: string; quantity: number }[]
@@ -47,6 +48,43 @@ export interface CheckoutPayload {
     state: string
   }
 }
+
+export type CheckoutErrorCode =
+  | "INVALID_REQUEST"
+  | "UNSUPPORTED_MEDIA_TYPE"
+  | "PAYLOAD_TOO_LARGE"
+  | "INVALID_CONTACT"
+  | "INVALID_SHIPPING_ADDRESS"
+  | "INVALID_ITEMS"
+  | "DUPLICATE_PRODUCT"
+  | "PRODUCT_UNAVAILABLE"
+  | "INSUFFICIENT_STOCK"
+  | "VENDOR_UNAVAILABLE"
+  | "INVALID_PRODUCT_PRICE"
+  | "PAYMENT_INITIALIZATION_FAILED"
+  | "SERVICE_UNAVAILABLE"
+
+export interface CheckoutSuccessResponse {
+  ok: true
+  data: {
+    order_id: string
+    reference: string
+    authorization_url: string
+  }
+}
+
+export interface CheckoutErrorResponse {
+  ok: false
+  error: {
+    code: CheckoutErrorCode
+    message: string
+  }
+  retry_after_ms?: number
+}
+
+export type CheckoutResponse =
+  | CheckoutSuccessResponse
+  | CheckoutErrorResponse
 
 export interface Vendor {
   id: string
