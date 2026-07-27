@@ -27,6 +27,8 @@ import {
   createCartFingerprint,
   isOrderId,
   isPaymentReference,
+  obtainCheckoutAttempt,
+  removeCheckoutAttempt,
   savePendingCheckout,
 } from "@/lib/payment-recovery"
 import { useCartStore } from "@/lib/store"
@@ -89,7 +91,14 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-class CheckoutUiError extends Error {}
+class CheckoutUiError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs = 0
+  ) {
+    super(message)
+  }
+}
 
 function normalizeWhitespace(value: string) {
   return value.trim().replace(/\s+/g, " ")
@@ -159,7 +168,9 @@ function isCheckoutSuccessResponse(
     isRecord(value.data) &&
     typeof value.data.order_id === "string" &&
     typeof value.data.reference === "string" &&
-    typeof value.data.authorization_url === "string"
+    typeof value.data.authorization_url === "string" &&
+    typeof value.data.checkout_attempt_id === "string" &&
+    typeof value.data.reused === "boolean"
   )
 }
 
@@ -186,6 +197,16 @@ function checkoutErrorMessage(code: string): string {
     case "INVALID_ITEMS":
     case "DUPLICATE_PRODUCT":
       return "Review the products and quantities in your cart."
+    case "CHECKOUT_INITIALIZING":
+      return "Checkout is still being prepared. Please wait a moment and try again."
+    case "CHECKOUT_ATTEMPT_CONFLICT":
+      return "Your checkout details changed. Please try again to start a new checkout."
+    case "CHECKOUT_EXPIRED":
+      return "This checkout session expired. Please try again to start a new checkout."
+    case "CHECKOUT_ALREADY_CONFIRMED":
+      return "This checkout has already been confirmed."
+    case "INVALID_CHECKOUT_ATTEMPT":
+      return "Checkout could not be started. Please try again."
     case "PAYMENT_INITIALIZATION_FAILED":
     case "SERVICE_UNAVAILABLE":
       return "Checkout is temporarily unavailable. Please try again."
@@ -290,7 +311,10 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
     setError(null)
 
     const contact = normalizeContact(formData)
+    const cartFingerprint = createCartFingerprint(items)
+    const checkoutAttempt = obtainCheckoutAttempt(cartFingerprint)
     const payload: CheckoutPayload = {
+      checkout_attempt_id: checkoutAttempt.checkout_attempt_id,
       ...contact,
       items: items.map((item) => ({
         product_id: item.product.id,
@@ -317,17 +341,57 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
       const data: unknown = await response.json().catch(() => null)
 
       if (!response.ok) {
-        const message = isCheckoutErrorResponse(data)
-          ? checkoutErrorMessage(data.error.code)
-          : "Checkout is temporarily unavailable. Please try again."
-        throw new CheckoutUiError(message)
+        if (isCheckoutErrorResponse(data)) {
+          if (
+            data.error.code === "CHECKOUT_ATTEMPT_CONFLICT" ||
+            data.error.code === "CHECKOUT_EXPIRED" ||
+            data.error.code === "INVALID_CHECKOUT_ATTEMPT"
+          ) {
+            removeCheckoutAttempt(checkoutAttempt.checkout_attempt_id)
+          }
+
+          if (data.error.code === "CHECKOUT_ALREADY_CONFIRMED") {
+            const order = data.order
+            if (
+              order &&
+              isOrderId(order.order_id) &&
+              isPaymentReference(order.reference)
+            ) {
+              savePendingCheckout({
+                order_id: order.order_id,
+                reference: order.reference,
+                cart_fingerprint: cartFingerprint,
+                created_at: new Date().toISOString(),
+              })
+              window.location.href = `/payment-success?${new URLSearchParams({
+                order: order.order_id,
+                reference: order.reference,
+              }).toString()}`
+              return
+            }
+          }
+
+          throw new CheckoutUiError(
+            checkoutErrorMessage(data.error.code),
+            data.error.code === "CHECKOUT_INITIALIZING" &&
+              data.retry_after_ms === 2000
+              ? data.retry_after_ms
+              : 0
+          )
+        }
+
+        throw new CheckoutUiError(
+          "Checkout is temporarily unavailable. Please try again."
+        )
       }
 
       if (
         !isCheckoutSuccessResponse(data) ||
         !isOrderId(data.data.order_id) ||
         !isPaymentReference(data.data.reference) ||
-        !safeAuthorizationUrl(data.data.authorization_url)
+        !safeAuthorizationUrl(data.data.authorization_url) ||
+        data.data.checkout_attempt_id !==
+          checkoutAttempt.checkout_attempt_id
       ) {
         throw new CheckoutUiError(
           "Checkout is temporarily unavailable. Please try again."
@@ -337,7 +401,7 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
       savePendingCheckout({
         order_id: data.data.order_id,
         reference: data.data.reference,
-        cart_fingerprint: createCartFingerprint(items),
+        cart_fingerprint: cartFingerprint,
         created_at: new Date().toISOString(),
       })
       window.location.href = data.data.authorization_url
@@ -352,7 +416,14 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         description: message,
         variant: "destructive",
       })
-      setIsLoading(false)
+      if (
+        paymentError instanceof CheckoutUiError &&
+        paymentError.retryAfterMs > 0
+      ) {
+        window.setTimeout(() => setIsLoading(false), paymentError.retryAfterMs)
+      } else {
+        setIsLoading(false)
+      }
     }
   }
 

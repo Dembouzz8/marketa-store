@@ -38,6 +38,7 @@ export interface CheckoutFormData {
 }
 
 export interface CheckoutPayload {
+  checkout_attempt_id: string
   customer_name: string
   customer_email: string
   customer_phone: string
@@ -61,6 +62,11 @@ export type CheckoutErrorCode =
   | "INSUFFICIENT_STOCK"
   | "VENDOR_UNAVAILABLE"
   | "INVALID_PRODUCT_PRICE"
+  | "INVALID_CHECKOUT_ATTEMPT"
+  | "CHECKOUT_ATTEMPT_CONFLICT"
+  | "CHECKOUT_INITIALIZING"
+  | "CHECKOUT_EXPIRED"
+  | "CHECKOUT_ALREADY_CONFIRMED"
   | "PAYMENT_INITIALIZATION_FAILED"
   | "SERVICE_UNAVAILABLE"
 
@@ -70,6 +76,8 @@ export interface CheckoutSuccessResponse {
     order_id: string
     reference: string
     authorization_url: string
+    checkout_attempt_id: string
+    reused: boolean
   }
 }
 
@@ -80,6 +88,10 @@ export interface CheckoutErrorResponse {
     message: string
   }
   retry_after_ms?: number
+  order?: {
+    order_id: string
+    reference: string
+  }
 }
 
 export type CheckoutResponse =

@@ -4,12 +4,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
 const MAX_BODY_BYTES = 32 * 1024
 const MAX_ITEMS = 50
 const MAX_QUANTITY = 99
+const CHECKOUT_REUSE_WINDOW_MS = 30 * 60 * 1000
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const REFERENCE_PATTERN = /^[A-Za-z0-9._=-]{1,100}$/
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CHECKOUT_FIELDS = new Set([
+  "checkout_attempt_id",
   "customer_name",
   "customer_email",
   "customer_phone",
@@ -77,6 +79,11 @@ type CheckoutErrorCode =
   | "INSUFFICIENT_STOCK"
   | "VENDOR_UNAVAILABLE"
   | "INVALID_PRODUCT_PRICE"
+  | "INVALID_CHECKOUT_ATTEMPT"
+  | "CHECKOUT_ATTEMPT_CONFLICT"
+  | "CHECKOUT_INITIALIZING"
+  | "CHECKOUT_EXPIRED"
+  | "CHECKOUT_ALREADY_CONFIRMED"
   | "PAYMENT_INITIALIZATION_FAILED"
   | "SERVICE_UNAVAILABLE"
 
@@ -86,6 +93,7 @@ type ValidatedItem = {
 }
 
 type ValidatedCheckout = {
+  checkout_attempt_id: string
   customer_name: string
   customer_email: string
   customer_phone: string
@@ -118,13 +126,15 @@ function errorResponse(
   code: CheckoutErrorCode,
   message: string,
   status: number,
-  retryAfterMs?: number
+  retryAfterMs?: number,
+  order?: { order_id: string; reference: string }
 ) {
   return new Response(
     JSON.stringify({
       ok: false,
       error: { code, message },
       ...(retryAfterMs ? { retry_after_ms: retryAfterMs } : {}),
+      ...(order ? { order } : {}),
     }),
     { status, headers: jsonHeaders() }
   )
@@ -134,6 +144,8 @@ function successResponse(data: {
   order_id: string
   reference: string
   authorization_url: string
+  checkout_attempt_id: string
+  reused: boolean
 }) {
   return new Response(JSON.stringify({ ok: true, data }), {
     status: 200,
@@ -188,6 +200,19 @@ function validateCheckout(value: unknown): ValidationResult {
   const phoneInput =
     typeof value.customer_phone === "string" ? value.customer_phone.trim() : ""
   const customerPhone = phoneInput.replace(/\D/g, "")
+  const checkoutAttemptId =
+    typeof value.checkout_attempt_id === "string"
+      ? value.checkout_attempt_id.toLowerCase()
+      : ""
+
+  if (!UUID_PATTERN.test(checkoutAttemptId)) {
+    return {
+      ok: false,
+      code: "INVALID_CHECKOUT_ATTEMPT",
+      message: "The checkout attempt is invalid.",
+      status: 400,
+    }
+  }
 
   if (
     !hasLengthBetween(customerName, 2, 100) ||
@@ -299,6 +324,7 @@ function validateCheckout(value: unknown): ValidationResult {
   return {
     ok: true,
     value: {
+      checkout_attempt_id: checkoutAttemptId,
       customer_name: customerName,
       customer_email: customerEmail,
       customer_phone: customerPhone,
@@ -380,6 +406,187 @@ function validAuthorizationUrl(value: unknown): value is string {
   }
 }
 
+async function createRequestFingerprint(
+  checkout: ValidatedCheckout
+): Promise<string> {
+  const canonicalRequest = JSON.stringify({
+    customer_name: checkout.customer_name,
+    customer_email: checkout.customer_email,
+    customer_phone: checkout.customer_phone,
+    shipping_address: {
+      address: checkout.shipping_address.address,
+      city: checkout.shipping_address.city,
+      state: checkout.shipping_address.state,
+    },
+    items: [...checkout.items].sort((left, right) =>
+      left.product_id.localeCompare(right.product_id)
+    ),
+  })
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonicalRequest)
+  )
+
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("")
+}
+
+type CheckoutSupabaseClient = ReturnType<typeof createClient>
+
+async function existingAttemptResponse(
+  supabase: CheckoutSupabaseClient,
+  checkoutAttemptId: string,
+  requestFingerprint: string
+): Promise<Response | null> {
+  const { data: attempt, error: attemptError } = await supabase
+    .from("checkout_attempts")
+    .select(
+      "checkout_attempt_id, order_id, request_fingerprint, payment_reference, payment_authorization_url, expires_at"
+    )
+    .eq("checkout_attempt_id", checkoutAttemptId)
+    .maybeSingle()
+
+  if (attemptError) {
+    logOperationFailure("lookup_checkout_attempt", "SERVICE_UNAVAILABLE")
+    return errorResponse(
+      "SERVICE_UNAVAILABLE",
+      "Checkout is temporarily unavailable. Please try again.",
+      503,
+      2000
+    )
+  }
+
+  if (!attempt) {
+    const { data: reservedOrder, error: reservedOrderError } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("checkout_attempt_id", checkoutAttemptId)
+      .maybeSingle()
+
+    if (reservedOrderError) {
+      logOperationFailure("lookup_reserved_order", "SERVICE_UNAVAILABLE")
+      return errorResponse(
+        "SERVICE_UNAVAILABLE",
+        "Checkout is temporarily unavailable. Please try again.",
+        503,
+        2000
+      )
+    }
+
+    return reservedOrder
+      ? errorResponse(
+          "CHECKOUT_INITIALIZING",
+          "Checkout is still being prepared.",
+          409,
+          2000
+        )
+      : null
+  }
+
+  if (attempt.request_fingerprint !== requestFingerprint) {
+    return errorResponse(
+      "CHECKOUT_ATTEMPT_CONFLICT",
+      "This checkout attempt no longer matches your current details.",
+      409
+    )
+  }
+
+  const orderId = String(attempt.order_id)
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, status, payment_ref")
+    .eq("id", orderId)
+    .eq("checkout_attempt_id", checkoutAttemptId)
+    .maybeSingle()
+
+  if (orderError || !order) {
+    logOperationFailure(
+      "lookup_checkout_attempt_order",
+      "SERVICE_UNAVAILABLE",
+      orderId
+    )
+    return errorResponse(
+      "SERVICE_UNAVAILABLE",
+      "Checkout is temporarily unavailable. Please try again.",
+      503,
+      2000
+    )
+  }
+
+  const orderStatus =
+    typeof order.status === "string" ? order.status.toLowerCase() : ""
+  const storedReference =
+    typeof attempt.payment_reference === "string"
+      ? attempt.payment_reference
+      : typeof order.payment_ref === "string"
+        ? order.payment_ref
+        : ""
+
+  if (orderStatus === "confirmed" || orderStatus === "fulfilled") {
+    if (!REFERENCE_PATTERN.test(storedReference)) {
+      logOperationFailure(
+        "confirmed_attempt_missing_reference",
+        "SERVICE_UNAVAILABLE",
+        orderId
+      )
+      return errorResponse(
+        "SERVICE_UNAVAILABLE",
+        "Checkout is temporarily unavailable. Please try again.",
+        503
+      )
+    }
+
+    return errorResponse(
+      "CHECKOUT_ALREADY_CONFIRMED",
+      "This checkout has already been confirmed.",
+      409,
+      undefined,
+      { order_id: orderId, reference: storedReference }
+    )
+  }
+
+  const expiresAt =
+    typeof attempt.expires_at === "string"
+      ? Date.parse(attempt.expires_at)
+      : Number.NaN
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    return errorResponse(
+      "CHECKOUT_EXPIRED",
+      "This checkout session has expired.",
+      409
+    )
+  }
+
+  if (orderStatus !== "pending") {
+    return errorResponse(
+      "CHECKOUT_EXPIRED",
+      "This checkout session has expired.",
+      409
+    )
+  }
+
+  if (
+    REFERENCE_PATTERN.test(storedReference) &&
+    validAuthorizationUrl(attempt.payment_authorization_url)
+  ) {
+    return successResponse({
+      order_id: orderId,
+      reference: storedReference,
+      authorization_url: attempt.payment_authorization_url,
+      checkout_attempt_id: checkoutAttemptId,
+      reused: true,
+    })
+  }
+
+  return errorResponse(
+    "CHECKOUT_INITIALIZING",
+    "Checkout is still being prepared.",
+    409,
+    2000
+  )
+}
+
 async function handleCheckout(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders })
@@ -443,16 +650,13 @@ async function handleCheckout(req: Request): Promise<Response> {
   }
 
   const {
+    checkout_attempt_id: checkoutAttemptId,
     customer_name: customerName,
     customer_email: customerEmail,
     customer_phone: customerPhone,
     shipping_address: shippingAddress,
     items,
   } = validation.value
-
-  // Batch 2B2 will persist customerName after its schema migration.
-  // It is intentionally not sent to Paystack metadata in this batch.
-  void customerName
 
   const storefrontUrl = Deno.env.get("STOREFRONT_URL")
   let storefrontOrigin: URL
@@ -472,6 +676,14 @@ async function handleCheckout(req: Request): Promise<Response> {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   )
+  const requestFingerprint = await createRequestFingerprint(validation.value)
+  const existingAttempt = await existingAttemptResponse(
+    supabase,
+    checkoutAttemptId,
+    requestFingerprint
+  )
+  if (existingAttempt) return existingAttempt
+
   const productIds = items.map((item) => item.product_id)
   const { data: products, error: productsError } = await supabase
     .from("products")
@@ -601,12 +813,12 @@ async function handleCheckout(req: Request): Promise<Response> {
     )
   }
 
-  const idempotencyKey = `ORD-${Date.now()}-${crypto.randomUUID()
-    .split("-")[0]
-    .toUpperCase()}`
+  const idempotencyKey = `CHECKOUT-${checkoutAttemptId}`
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
+      checkout_attempt_id: checkoutAttemptId,
+      customer_name: customerName,
       customer_email: customerEmail,
       customer_phone: customerPhone,
       status: "pending",
@@ -618,6 +830,15 @@ async function handleCheckout(req: Request): Promise<Response> {
     .single()
 
   if (orderError || !order) {
+    if (orderError?.code === "23505") {
+      const racedAttempt = await existingAttemptResponse(
+        supabase,
+        checkoutAttemptId,
+        requestFingerprint
+      )
+      if (racedAttempt) return racedAttempt
+    }
+
     logOperationFailure("insert_pending_order", "SERVICE_UNAVAILABLE")
     return errorResponse(
       "SERVICE_UNAVAILABLE",
@@ -650,6 +871,35 @@ async function handleCheckout(req: Request): Promise<Response> {
     }
   }
 
+  const expiresAt = new Date(
+    Date.now() + CHECKOUT_REUSE_WINDOW_MS
+  ).toISOString()
+  const { error: attemptInsertError } = await supabase
+    .from("checkout_attempts")
+    .insert({
+      checkout_attempt_id: checkoutAttemptId,
+      order_id: orderId,
+      request_fingerprint: requestFingerprint,
+      payment_reference: null,
+      payment_authorization_url: null,
+      expires_at: expiresAt,
+    })
+
+  if (attemptInsertError) {
+    logOperationFailure(
+      "reserve_checkout_attempt",
+      "SERVICE_UNAVAILABLE",
+      orderId
+    )
+    await cleanupOrder()
+    return errorResponse(
+      "SERVICE_UNAVAILABLE",
+      "Checkout is temporarily unavailable. Please try again.",
+      503,
+      2000
+    )
+  }
+
   const orderItems = validatedItems.map((item) => ({
     order_id: orderId,
     ...item,
@@ -672,6 +922,8 @@ async function handleCheckout(req: Request): Promise<Response> {
   const callbackUrl = new URL("/payment-success", storefrontOrigin)
   callbackUrl.searchParams.set("order", orderId)
 
+  // This 30-minute window controls Marketa's safe response reuse. It does not
+  // guarantee the lifetime of Paystack's underlying authorization link.
   let paystackResponse: Response
   try {
     paystackResponse = await fetch(
@@ -685,7 +937,6 @@ async function handleCheckout(req: Request): Promise<Response> {
         body: JSON.stringify({
           email: customerEmail,
           amount: totalKobo,
-          reference: idempotencyKey,
           callback_url: callbackUrl.toString(),
           metadata: {
             order_id: orderId,
@@ -700,11 +951,11 @@ async function handleCheckout(req: Request): Promise<Response> {
       "PAYMENT_INITIALIZATION_FAILED",
       orderId
     )
-    await cleanupOrder()
     return errorResponse(
-      "PAYMENT_INITIALIZATION_FAILED",
-      "Checkout is temporarily unavailable. Please try again.",
-      502
+      "CHECKOUT_INITIALIZING",
+      "Checkout is still being prepared.",
+      503,
+      2000
     )
   }
 
@@ -740,7 +991,6 @@ async function handleCheckout(req: Request): Promise<Response> {
       "PAYMENT_INITIALIZATION_FAILED",
       orderId
     )
-    await cleanupOrder()
     return errorResponse(
       "PAYMENT_INITIALIZATION_FAILED",
       "Checkout is temporarily unavailable. Please try again.",
@@ -752,15 +1002,47 @@ async function handleCheckout(req: Request): Promise<Response> {
     .from("orders")
     .update({ payment_ref: reference })
     .eq("id", orderId)
+    .eq("checkout_attempt_id", checkoutAttemptId)
     .select("id")
     .single()
 
   if (paymentReferenceError || !updatedOrder) {
-    logOperationFailure("persist_payment_ref", "SERVICE_UNAVAILABLE", orderId)
-    return errorResponse(
+    logOperationFailure(
+      "persist_payment_ref_reconciliation_required",
       "SERVICE_UNAVAILABLE",
-      "Checkout is temporarily unavailable. Please try again.",
-      503
+      orderId
+    )
+    return errorResponse(
+      "CHECKOUT_INITIALIZING",
+      "Checkout is still being prepared.",
+      503,
+      2000
+    )
+  }
+
+  const { data: updatedAttempt, error: attemptUpdateError } = await supabase
+    .from("checkout_attempts")
+    .update({
+      payment_reference: reference,
+      payment_authorization_url: authorizationUrl,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("checkout_attempt_id", checkoutAttemptId)
+    .eq("order_id", orderId)
+    .select("checkout_attempt_id")
+    .single()
+
+  if (attemptUpdateError || !updatedAttempt) {
+    logOperationFailure(
+      "persist_checkout_authorization_reconciliation_required",
+      "SERVICE_UNAVAILABLE",
+      orderId
+    )
+    return errorResponse(
+      "CHECKOUT_INITIALIZING",
+      "Checkout is still being prepared.",
+      503,
+      2000
     )
   }
 
@@ -768,6 +1050,8 @@ async function handleCheckout(req: Request): Promise<Response> {
     order_id: orderId,
     reference,
     authorization_url: authorizationUrl,
+    checkout_attempt_id: checkoutAttemptId,
+    reused: false,
   })
 }
 

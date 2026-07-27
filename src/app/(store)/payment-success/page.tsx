@@ -26,6 +26,7 @@ import {
   isOrderId,
   isPaymentReference,
   readPendingCheckout,
+  removeCheckoutAttemptForCart,
   removePendingCheckout,
 } from "@/lib/payment-recovery"
 import { useCartStore } from "@/lib/store"
@@ -156,6 +157,9 @@ function PaymentSuccessContent() {
       pendingCheckout.cart_fingerprint === createCartFingerprint(items)
     ) {
       clearCart()
+    }
+    if (pendingCheckout) {
+      removeCheckoutAttemptForCart(pendingCheckout.cart_fingerprint)
     }
     removePendingCheckout(orderId, reference)
 

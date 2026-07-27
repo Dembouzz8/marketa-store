@@ -1,6 +1,8 @@
 import type { CartItem } from "@/types"
 
 export const PENDING_CHECKOUT_STORAGE_KEY = "marketa-pending-checkout"
+export const CHECKOUT_ATTEMPT_STORAGE_KEY = "marketa-checkout-attempt"
+export const CHECKOUT_ATTEMPT_REUSE_MS = 30 * 60 * 1000
 
 export const PAYMENT_STATUS_VALUES = [
   "confirmed",
@@ -13,6 +15,12 @@ export type PaymentStatus = (typeof PAYMENT_STATUS_VALUES)[number]
 export interface PendingCheckoutSnapshot {
   order_id: string
   reference: string
+  cart_fingerprint: string
+  created_at: string
+}
+
+export interface CheckoutAttemptSnapshot {
+  checkout_attempt_id: string
   cart_fingerprint: string
   created_at: string
 }
@@ -45,6 +53,85 @@ export function createCartFingerprint(
       }))
       .sort((left, right) => left.product_id.localeCompare(right.product_id))
   )
+}
+
+function readStoredCheckoutAttempt(): CheckoutAttemptSnapshot | null {
+  try {
+    const stored = sessionStorage.getItem(CHECKOUT_ATTEMPT_STORAGE_KEY)
+    if (!stored) return null
+
+    const value = JSON.parse(stored) as Partial<CheckoutAttemptSnapshot>
+    const createdAt = Date.parse(value.created_at ?? "")
+    if (
+      typeof value.checkout_attempt_id !== "string" ||
+      !isOrderId(value.checkout_attempt_id) ||
+      typeof value.cart_fingerprint !== "string" ||
+      !Number.isFinite(createdAt)
+    ) {
+      return null
+    }
+
+    return {
+      checkout_attempt_id: value.checkout_attempt_id,
+      cart_fingerprint: value.cart_fingerprint,
+      created_at: value.created_at as string,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function obtainCheckoutAttempt(
+  cartFingerprint: string
+): CheckoutAttemptSnapshot {
+  const stored = readStoredCheckoutAttempt()
+  const createdAt = stored ? Date.parse(stored.created_at) : 0
+  if (
+    stored &&
+    stored.cart_fingerprint === cartFingerprint &&
+    Date.now() - createdAt < CHECKOUT_ATTEMPT_REUSE_MS
+  ) {
+    return stored
+  }
+
+  const snapshot: CheckoutAttemptSnapshot = {
+    checkout_attempt_id: crypto.randomUUID(),
+    cart_fingerprint: cartFingerprint,
+    created_at: new Date().toISOString(),
+  }
+
+  try {
+    sessionStorage.setItem(
+      CHECKOUT_ATTEMPT_STORAGE_KEY,
+      JSON.stringify(snapshot)
+    )
+  } catch {
+    // The in-memory value still makes this submission valid.
+  }
+
+  return snapshot
+}
+
+export function removeCheckoutAttempt(checkoutAttemptId: string): void {
+  const stored = readStoredCheckoutAttempt()
+  if (!stored || stored.checkout_attempt_id !== checkoutAttemptId) return
+
+  try {
+    sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY)
+  } catch {
+    // Storage may be unavailable. Server-side idempotency remains authoritative.
+  }
+}
+
+export function removeCheckoutAttemptForCart(cartFingerprint: string): void {
+  const stored = readStoredCheckoutAttempt()
+  if (!stored || stored.cart_fingerprint !== cartFingerprint) return
+
+  try {
+    sessionStorage.removeItem(CHECKOUT_ATTEMPT_STORAGE_KEY)
+  } catch {
+    // Storage may be unavailable. Payment confirmation remains unaffected.
+  }
 }
 
 export function savePendingCheckout(
