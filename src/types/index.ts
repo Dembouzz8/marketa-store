@@ -11,10 +11,12 @@ export interface Product {
   created_at: string
 }
 
-export interface CatalogueVendor {
+export interface PublicVendor {
   id: string
   name: string
 }
+
+export type CatalogueVendor = PublicVendor
 
 export interface CatalogueProduct {
   product: Product

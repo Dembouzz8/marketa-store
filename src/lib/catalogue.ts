@@ -1,6 +1,11 @@
 import { getCategoryDatabaseValues, STORE_CATEGORIES } from "@/lib/storefront"
 import { supabase } from "@/lib/supabase"
-import type { CatalogueProduct, CatalogueVendor, Product } from "@/types"
+import type {
+  CatalogueProduct,
+  CatalogueVendor,
+  Product,
+  PublicVendor,
+} from "@/types"
 
 export const CATALOGUE_PAGE_SIZE = 24
 
@@ -23,6 +28,10 @@ export interface CatalogueParams {
 
 export type RawCatalogueParams = Record<string, string | string[] | undefined>
 
+export function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
 function first(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "")
 }
@@ -35,9 +44,7 @@ function price(value: string): number | null {
 
 function uuid(value: string): string {
   const normalized = value.trim().toLowerCase()
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(normalized)
-    ? normalized
-    : ""
+  return isUuid(normalized) ? normalized : ""
 }
 
 export function normalizeSearchTerm(value: string): string {
@@ -115,6 +122,54 @@ export async function getActiveVendors(): Promise<CatalogueVendor[]> {
     throw new Error(`Unable to load vendors: ${error.message}`)
   }
   return (data ?? []) as CatalogueVendor[]
+}
+
+export async function getActiveVendorById(
+  vendorId: string
+): Promise<PublicVendor | null> {
+  const { data, error } = await supabase
+    .from("public_active_vendors")
+    .select("id, name")
+    .eq("id", vendorId)
+    .maybeSingle()
+
+  if (error) {
+    console.error("[public vendor storefront] vendor query failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    })
+    throw new Error("Unable to load the vendor storefront.")
+  }
+
+  return data as PublicVendor | null
+}
+
+export async function getActiveProductsByVendorId(
+  vendorId: string
+): Promise<Product[]> {
+  const { data, error } = await supabase
+    .from("products")
+    .select(
+      "id, vendor_id, name, description, price, stock, category, images, is_active, created_at"
+    )
+    .eq("vendor_id", vendorId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+
+  if (error) {
+    console.error("[public vendor storefront] products query failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    })
+    throw new Error("Unable to load products for this vendor storefront.")
+  }
+
+  return (data ?? []) as Product[]
 }
 
 export async function getCatalogue(

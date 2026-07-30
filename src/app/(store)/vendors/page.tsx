@@ -31,7 +31,7 @@ export default async function VendorsPage() {
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-400 sm:text-lg">
               Discover active sellers on Marketa, then browse the marketplace
-              to find products that fit your needs.
+              and visit their stores to find products that fit your needs.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
@@ -60,16 +60,18 @@ export default async function VendorsPage() {
             </h2>
             <p className="mt-2 text-sm leading-6 text-zinc-600">
               These seller names come directly from active Marketa profiles.
-              Public seller storefronts will be added in a future update.
+              Visit a store to browse the active products it currently offers.
             </p>
           </div>
 
           {vendors.length > 0 ? (
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {vendors.map((vendor) => (
-                <article
+                <Link
                   key={vendor.id}
-                  className="rounded-xl border border-zinc-100 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
+                  href={`/vendors/${vendor.id}`}
+                  aria-label={`Visit ${vendor.name} store`}
+                  className="group rounded-xl border border-zinc-100 bg-white p-5 shadow-sm transition-all hover:border-zinc-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
                 >
                   <div className="flex items-center gap-4">
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600">
@@ -84,7 +86,14 @@ export default async function VendorsPage() {
                       </p>
                     </div>
                   </div>
-                </article>
+                  <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                    Visit Store
+                    <ArrowRight
+                      className="size-4 transition-transform group-hover:translate-x-1"
+                      aria-hidden="true"
+                    />
+                  </span>
+                </Link>
               ))}
             </div>
           ) : (
