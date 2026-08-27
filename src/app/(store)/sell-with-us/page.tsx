@@ -102,13 +102,13 @@ export default function SellWithUsPage() {
               order management and a secure way for customers to pay.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <a
-                href="#start-selling"
+              <Link
+                href="/sell-with-us/apply"
                 className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-amber-500 px-6 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
               >
                 Start Selling
                 <ArrowRight className="size-4" aria-hidden="true" />
-              </a>
+              </Link>
               <Link
                 href="/vendor/login"
                 className="inline-flex min-h-12 items-center justify-center rounded-lg border border-zinc-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:border-zinc-400 hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
