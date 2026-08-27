@@ -367,6 +367,8 @@ Do not require account creation before checkout.
 
 ### Phase 1 — Homepage and navigation
 
+**Status: Complete.**
+
 - Remove the product count
 - Remove unsupported statistics
 - Fix all navigation links
@@ -376,6 +378,8 @@ Do not require account creation before checkout.
 - Preserve the existing cart and checkout
 
 ### Phase 2 — Product discovery
+
+**Status: Implemented and substantially complete in the current repository.**
 
 - Full product catalogue
 - Product search
@@ -387,12 +391,26 @@ Do not require account creation before checkout.
 
 ### Phase 3 — Vendors and seller onboarding
 
-- Vendor directory
-- Public vendor storefronts
-- Sell With Us content
-- Vendor application flow
+**Status: Complete for the agreed MVP scope.**
+
+- Vendor directory at `/vendors`
+- Public vendor storefronts at `/vendors/[id]`
+- Public vendor profile data exposed through `public_active_vendors`
+- Verified vendor presentation backed by `vendor_verifications`
+- Sell With Us content at `/sell-with-us`
+- Durable, private vendor application foundation
+- Public application form and RPC submission at `/sell-with-us/apply`
+
+The following remain outside the completed Phase 3 MVP scope:
+
+- Vendor logo and storage support is a deferred enhancement.
+- Application review and administrative tooling is not implemented.
+- Automatic Auth user or vendor provisioning is not implemented.
+- Payment and paid-order outbox redesign remains separately deferred and frozen.
 
 ### Phase 4 — Customer experience
+
+**Status: Not implemented.**
 
 - Customer authentication
 - Customer order history

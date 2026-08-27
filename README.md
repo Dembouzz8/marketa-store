@@ -61,6 +61,25 @@ deployments should add distributed rate limiting at the platform or gateway
 layer; this repository does not include suitable shared rate-limit
 infrastructure, and an in-memory Edge Function limiter would not be reliable.
 
+## Public Vendors and Seller Applications
+
+- `/vendors` lists active sellers from the `public_active_vendors` view.
+- `/vendors/[id]` shows the public vendor profile and that vendor's active
+  products. Public storefront code does not read private `vendors` fields.
+- The public projection contains only `id`, `name`, `slug`, `description`,
+  `main_category`, `location`, `shipping_info`, `return_info`, and the derived
+  `is_verified` value.
+- Verification is controlled separately through `vendor_verifications`.
+- `/sell-with-us/apply` submits prospective-seller information through the
+  `submit_vendor_application` RPC. The underlying `vendor_applications` table
+  is private to direct public, anonymous, and authenticated access.
+- An application submission does not create an Auth user, vendor row, or
+  dashboard access. Review tooling and automatic vendor provisioning are not
+  implemented.
+
+Vendor logo and storage support remains a deferred enhancement. Payment and
+paid-order outbox redesign remains separately deferred and frozen.
+
 ## Vendor Portal
 
 The vendor dashboard is available at `/vendor/login`. Authenticated vendor users are redirected to `/vendor/dashboard`, while unauthenticated visitors are sent back to the login page.
@@ -74,87 +93,22 @@ To create a vendor account:
 
 ## Seed Test Data in Supabase
 
-Create a `products` table with columns matching the storefront type:
+The tracked files in `supabase/migrations/` are the source of truth for the
+current public vendor profile, verification, application, checkout, and product
+policy changes. Do not replace the linked project's schema with simplified
+`create table` snippets.
 
-```sql
-create table if not exists products (
-  id uuid primary key default gen_random_uuid(),
-  vendor_id uuid not null default gen_random_uuid(),
-  name text not null,
-  description text,
-  price numeric not null,
-  stock integer not null default 0,
-  category text,
-  images text[] not null default '{}',
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-```
-
-Create the vendor tables used by the dashboard:
-
-```sql
-create table if not exists vendors (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null unique,
-  name text not null,
-  email text not null,
-  phone text,
-  bank_details jsonb not null default '{}',
-  platform_fee_pct numeric not null default 10,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists orders (
-  id uuid primary key default gen_random_uuid(),
-  customer_email text not null,
-  customer_phone text,
-  status text not null default 'pending',
-  total_amount numeric not null default 0,
-  payment_ref text,
-  shipping_address jsonb not null default '{}',
-  created_at timestamptz not null default now()
-);
-
-create table if not exists order_items (
-  id uuid primary key default gen_random_uuid(),
-  order_id uuid not null references orders(id) on delete cascade,
-  product_id uuid not null references products(id) on delete cascade,
-  vendor_id uuid not null references vendors(id) on delete cascade,
-  quantity integer not null,
-  unit_price numeric not null,
-  subtotal numeric not null,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists payout_ledger (
-  id uuid primary key default gen_random_uuid(),
-  vendor_id uuid not null references vendors(id) on delete cascade,
-  amount numeric not null,
-  type text not null check (type in ('credit', 'debit')),
-  reference text not null,
-  description text,
-  order_id uuid references orders(id) on delete set null,
-  created_at timestamptz not null default now()
-);
-```
-
-Create the product image bucket:
-
-```sql
-insert into storage.buckets (id, name, public)
-values ('product-images', 'product-images', true)
-on conflict (id) do nothing;
-```
-
-Insert sample products:
+To seed storefront products, first create or identify a vendor through the
+controlled administrative process described above. Ensure the vendor is active,
+then use its real UUID when inserting products. For example, replace the
+placeholder UUID below before running the statement:
 
 ```sql
 insert into products
-  (name, description, price, stock, category, images, is_active)
+  (vendor_id, name, description, price, stock, category, images, is_active)
 values
   (
+    '00000000-0000-0000-0000-000000000000',
     'Adire Tote Bag',
     'Handcrafted tote made with Nigerian adire fabric.',
     18500,
@@ -164,6 +118,7 @@ values
     true
   ),
   (
+    '00000000-0000-0000-0000-000000000000',
     'Wireless Earbuds',
     'Compact earbuds with clear audio and long battery life.',
     42000,
@@ -173,6 +128,7 @@ values
     true
   ),
   (
+    '00000000-0000-0000-0000-000000000000',
     'Lagos Spice Box',
     'A curated blend of spices for rich Nigerian meals.',
     9500,
@@ -182,6 +138,7 @@ values
     true
   ),
   (
+    '00000000-0000-0000-0000-000000000000',
     'Glow Skincare Kit',
     'Daily skincare essentials for a simple routine.',
     26000,
@@ -191,3 +148,9 @@ values
     true
   );
 ```
+
+Populate optional public profile fields on the vendor row when needed. Add a
+`vendor_verifications` row only through an authorized administrative path when
+the vendor is genuinely verified. Do not seed `vendor_applications` directly;
+use `/sell-with-us/apply` when testing the public submission flow with explicitly
+approved disposable data.
