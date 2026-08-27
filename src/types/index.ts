@@ -14,9 +14,16 @@ export interface Product {
 export interface PublicVendor {
   id: string
   name: string
+  slug: string | null
+  description: string | null
+  main_category: string | null
+  location: string | null
+  shipping_info: string | null
+  return_info: string | null
+  is_verified: boolean
 }
 
-export type CatalogueVendor = PublicVendor
+export type CatalogueVendor = Pick<PublicVendor, "id" | "name">
 
 export interface CatalogueProduct {
   product: Product

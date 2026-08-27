@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { ArrowRight, Store } from "lucide-react"
+import { ArrowRight, BadgeCheck, MapPin, Store } from "lucide-react"
 
 import { getActiveVendors } from "@/lib/catalogue"
 
@@ -9,6 +9,11 @@ export const dynamic = "force-dynamic"
 export const metadata: Metadata = {
   title: "Vendors | Marketa",
   description: "Discover active sellers on the Marketa marketplace.",
+}
+
+function optionalText(value: string | null | undefined): string | null {
+  const text = value?.trim()
+  return text ? text : null
 }
 
 export default async function VendorsPage() {
@@ -66,35 +71,63 @@ export default async function VendorsPage() {
 
           {vendors.length > 0 ? (
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {vendors.map((vendor) => (
-                <Link
-                  key={vendor.id}
-                  href={`/vendors/${vendor.id}`}
-                  aria-label={`Visit ${vendor.name} store`}
-                  className="group rounded-xl border border-zinc-100 bg-white p-5 shadow-sm transition-all hover:border-zinc-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600">
-                      <Store className="size-6" aria-hidden="true" />
+              {vendors.map((vendor) => {
+                const category = optionalText(vendor.main_category)
+                const location = optionalText(vendor.location)
+                const description = optionalText(vendor.description)
+
+                return (
+                  <Link
+                    key={vendor.id}
+                    href={`/vendors/${vendor.id}`}
+                    className="group flex h-full min-w-0 flex-col rounded-xl border border-zinc-100 bg-white p-5 shadow-sm transition-all hover:border-zinc-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+                  >
+                    <div className="flex min-w-0 items-start gap-4">
+                      <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-500">
+                        <Store className="size-6" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <h3 className="min-w-0 break-words text-base font-semibold text-zinc-900">
+                            {vendor.name}
+                          </h3>
+                          {vendor.is_verified === true && (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                              <BadgeCheck className="size-3.5" aria-hidden="true" />
+                              Verified
+                            </span>
+                          )}
+                        </div>
+                        {(category || location) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-zinc-500">
+                            {category && <span className="break-words">{category}</span>}
+                            {location && (
+                              <span className="inline-flex min-w-0 items-center gap-1.5">
+                                <MapPin className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span className="break-words">{location}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="truncate text-base font-semibold text-zinc-900">
-                        {vendor.name}
-                      </h3>
-                      <p className="mt-1 text-sm text-zinc-500">
-                        Active seller on Marketa
+
+                    {description && (
+                      <p className="mt-4 line-clamp-3 break-words text-sm leading-6 text-zinc-600">
+                        {description}
                       </p>
-                    </div>
-                  </div>
-                  <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-zinc-900">
-                    Visit Store
-                    <ArrowRight
-                      className="size-4 transition-transform group-hover:translate-x-1"
-                      aria-hidden="true"
-                    />
-                  </span>
-                </Link>
-              ))}
+                    )}
+
+                    <span className="mt-auto inline-flex items-center gap-2 pt-5 text-sm font-semibold text-zinc-900">
+                      Visit Store
+                      <ArrowRight
+                        className="size-4 transition-transform group-hover:translate-x-1"
+                        aria-hidden="true"
+                      />
+                    </span>
+                  </Link>
+                )
+              })}
             </div>
           ) : (
             <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-6 py-12 text-center">

@@ -9,6 +9,9 @@ import type {
 
 export const CATALOGUE_PAGE_SIZE = 24
 
+const PUBLIC_VENDOR_FIELDS =
+  "id, name, slug, description, main_category, location, shipping_info, return_info, is_verified"
+
 export const AVAILABILITY_VALUES = ["all", "in-stock", "out-of-stock"] as const
 export const SORT_VALUES = ["newest", "price-asc", "price-desc"] as const
 
@@ -106,10 +109,10 @@ export function catalogueHref(
   return query ? `/products?${query}` : "/products"
 }
 
-export async function getActiveVendors(): Promise<CatalogueVendor[]> {
+export async function getActiveVendors(): Promise<PublicVendor[]> {
   const { data, error } = await supabase
     .from("public_active_vendors")
-    .select("id, name")
+    .select(PUBLIC_VENDOR_FIELDS)
     .order("name", { ascending: true })
 
   if (error) {
@@ -121,7 +124,7 @@ export async function getActiveVendors(): Promise<CatalogueVendor[]> {
     })
     throw new Error(`Unable to load vendors: ${error.message}`)
   }
-  return (data ?? []) as CatalogueVendor[]
+  return (data ?? []) as PublicVendor[]
 }
 
 export async function getActiveVendorById(
@@ -129,7 +132,7 @@ export async function getActiveVendorById(
 ): Promise<PublicVendor | null> {
   const { data, error } = await supabase
     .from("public_active_vendors")
-    .select("id, name")
+    .select(PUBLIC_VENDOR_FIELDS)
     .eq("id", vendorId)
     .maybeSingle()
 
