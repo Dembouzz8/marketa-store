@@ -1,4 +1,5 @@
-import { LogOut, UserRound } from "lucide-react"
+import Link from "next/link"
+import { ArrowRight, LogOut, UserRound } from "lucide-react"
 import { redirect } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
@@ -36,7 +37,32 @@ export default async function CustomerAccountPage() {
           </p>
         </div>
 
-        <form action={signOutCustomer} className="mt-8">
+        <div className="mt-6">
+          <Link
+            href="/account/profile"
+            className="flex items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white p-4 transition-colors hover:border-amber-400 hover:bg-amber-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-700">
+                <UserRound className="size-5" aria-hidden="true" />
+              </span>
+              <span>
+                <span className="block font-semibold text-zinc-900">
+                  Profile
+                </span>
+                <span className="mt-0.5 block text-sm text-zinc-500">
+                  Add or update your name and phone number.
+                </span>
+              </span>
+            </span>
+            <ArrowRight
+              className="size-5 shrink-0 text-zinc-400"
+              aria-hidden="true"
+            />
+          </Link>
+        </div>
+
+        <form action={signOutCustomer} className="mt-6">
           <Button
             type="submit"
             variant="outline"

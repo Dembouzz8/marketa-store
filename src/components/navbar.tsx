@@ -10,7 +10,13 @@ import {
   useSyncExternalStore,
 } from "react"
 import { motion } from "framer-motion"
-import { Menu, Search, ShoppingBag, ShoppingCart } from "lucide-react"
+import {
+  Menu,
+  Search,
+  ShoppingBag,
+  ShoppingCart,
+  UserRound,
+} from "lucide-react"
 
 import {
   Sheet,
@@ -162,6 +168,17 @@ export function Navbar() {
             )}
           </button>
           <Link
+            href="/account"
+            aria-label="Customer account"
+            className={cn(
+              "flex items-center gap-2 rounded-lg p-2 text-sm text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-white lg:px-3",
+              isActiveLink("/account") && "bg-zinc-800 text-white"
+            )}
+          >
+            <UserRound className="size-5" aria-hidden="true" />
+            <span className="hidden lg:inline">Account</span>
+          </Link>
+          <Link
             href="/sell-with-us"
             className="hidden rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-amber-400 md:inline-flex"
           >
@@ -231,6 +248,17 @@ export function Navbar() {
                 {link.label}
               </Link>
             ))}
+            <Link
+              href="/account"
+              onClick={() => setIsMobileOpen(false)}
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-3 py-3 text-sm text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white",
+                isActiveLink("/account") && "bg-zinc-800 text-white"
+              )}
+            >
+              <UserRound className="size-4" aria-hidden="true" />
+              Account
+            </Link>
             <Link
               href="/sell-with-us"
               onClick={() => setIsMobileOpen(false)}
