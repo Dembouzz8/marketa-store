@@ -1,6 +1,20 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
+function redirectWithCookies(
+  request: NextRequest,
+  response: NextResponse,
+  path: string
+) {
+  const redirectResponse = NextResponse.redirect(new URL(path, request.url))
+
+  response.cookies.getAll().forEach((cookie) => {
+    redirectResponse.cookies.set(cookie)
+  })
+
+  return redirectResponse
+}
+
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
 
@@ -31,19 +45,41 @@ export async function proxy(request: NextRequest) {
 
   const path = request.nextUrl.pathname
   const isVendorRoute = path.startsWith("/vendor")
-  const isLoginPage = path === "/vendor/login"
+  const isVendorLoginPage = path === "/vendor/login"
+  const isAccountRoute = path === "/account" || path.startsWith("/account/")
+  const isAccountAuthPage =
+    path === "/account/login" || path === "/account/register"
+  const isAccountCallback = path === "/account/auth/callback"
+  const isProtectedAccountRoute =
+    isAccountRoute && !isAccountAuthPage && !isAccountCallback
 
-  if (isVendorRoute && !isLoginPage && !user) {
-    return NextResponse.redirect(new URL("/vendor/login", request.url))
+  if (isVendorRoute && !isVendorLoginPage && !user) {
+    return redirectWithCookies(request, response, "/vendor/login")
   }
 
-  if (isLoginPage && user) {
-    return NextResponse.redirect(new URL("/vendor/dashboard", request.url))
+  if (isVendorLoginPage && user) {
+    const { data: vendor } = await supabase
+      .from("vendors")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle()
+
+    if (vendor) {
+      return redirectWithCookies(request, response, "/vendor/dashboard")
+    }
+  }
+
+  if (isProtectedAccountRoute && !user) {
+    return redirectWithCookies(request, response, "/account/login")
+  }
+
+  if (isAccountAuthPage && user) {
+    return redirectWithCookies(request, response, "/account")
   }
 
   return response
 }
 
 export const config = {
-  matcher: ["/vendor/:path*"],
+  matcher: ["/vendor/:path*", "/account/:path*"],
 }
