@@ -18,25 +18,28 @@ export type ProfileSaveResult = {
   }
 }
 
-function normalizeOptionalText(value: FormDataEntryValue | null) {
-  if (typeof value !== "string") return null
+function normalizeRequiredText(value: FormDataEntryValue | null) {
+  if (typeof value !== "string") return ""
 
-  const normalized = value.trim()
-  return normalized || null
+  return value.trim()
 }
 
 export async function saveCustomerProfile(
   formData: FormData
 ): Promise<ProfileSaveResult> {
-  const fullName = normalizeOptionalText(formData.get("full_name"))
-  const phone = normalizeOptionalText(formData.get("phone"))
+  const fullName = normalizeRequiredText(formData.get("full_name"))
+  const phone = normalizeRequiredText(formData.get("phone"))
   const fieldErrors: NonNullable<ProfileSaveResult["fieldErrors"]> = {}
 
-  if (fullName && fullName.length > 120) {
+  if (!fullName) {
+    fieldErrors.full_name = "Enter your full name."
+  } else if (fullName.length > 120) {
     fieldErrors.full_name = "Full name must be 120 characters or fewer."
   }
 
-  if (phone && phone.length > 32) {
+  if (!phone) {
+    fieldErrors.phone = "Enter your phone number."
+  } else if (phone.length > 32) {
     fieldErrors.phone = "Phone number must be 32 characters or fewer."
   }
 
@@ -115,8 +118,8 @@ export async function saveCustomerProfile(
     status: "success",
     message: "Profile saved.",
     values: {
-      full_name: fullName ?? "",
-      phone: phone ?? "",
+      full_name: fullName,
+      phone,
     },
   }
 }

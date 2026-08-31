@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { Loader2, LockKeyhole, Mail, UserRound } from "lucide-react"
-import { useMemo, useState } from "react"
+import { Suspense, useMemo, useState } from "react"
+import { useSearchParams } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,6 +16,16 @@ const inputClassName =
   "mt-2 h-11 border-zinc-300 bg-white px-3 text-zinc-900 focus-visible:border-amber-500 focus-visible:ring-amber-500/20"
 
 export default function CustomerLoginPage() {
+  return (
+    <Suspense fallback={<CustomerLoginLoadingState />}>
+      <CustomerLoginForm />
+    </Suspense>
+  )
+}
+
+function CustomerLoginForm() {
+  const searchParams = useSearchParams()
+  const isCheckoutFlow = searchParams.get("checkout") === "1"
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -59,7 +70,7 @@ export default function CustomerLoginPage() {
         return
       }
 
-      window.location.assign("/account")
+      window.location.assign("/")
     } catch {
       setErrors({
         form: "We couldn't sign you in right now. Please try again.",
@@ -80,8 +91,9 @@ export default function CustomerLoginPage() {
             Customer Login
           </h1>
           <p className="mt-2 text-sm leading-6 text-zinc-600">
-            Sign in to your Marketa customer account. You can always shop and
-            check out without an account.
+            {isCheckoutFlow
+              ? "Sign in to continue to checkout."
+              : "Sign in to your Marketa customer account."}
           </p>
         </div>
 
@@ -200,6 +212,20 @@ export default function CustomerLoginPage() {
             Create one
           </Link>
         </p>
+      </div>
+    </main>
+  )
+}
+
+function CustomerLoginLoadingState() {
+  return (
+    <main className="bg-zinc-50 px-4 py-12 sm:px-6 sm:py-16">
+      <div
+        role="status"
+        className="mx-auto flex min-h-80 w-full max-w-md items-center justify-center rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600 shadow-sm sm:p-8"
+      >
+        <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
+        Loading sign in...
       </div>
     </main>
   )

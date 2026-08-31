@@ -76,7 +76,7 @@ export default function CustomerRegisterPage() {
       }
 
       if (data.session) {
-        window.location.assign("/account")
+        window.location.assign("/account/profile?setup=1")
         return
       }
 
@@ -106,7 +106,7 @@ export default function CustomerRegisterPage() {
           </h1>
           <p className="mt-3 text-sm leading-6 text-zinc-600">
             If confirmation is required, use the link sent to your email to
-            finish creating your customer account.
+            continue to required profile setup.
           </p>
           <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
             <Link
@@ -138,8 +138,8 @@ export default function CustomerRegisterPage() {
             Create Customer Account
           </h1>
           <p className="mt-2 text-sm leading-6 text-zinc-600">
-            An account is optional. You can continue browsing and purchasing as
-            a guest at any time.
+            Create an account, then add your required name and phone number
+            before purchasing.
           </p>
         </div>
 

@@ -11,7 +11,13 @@ type CustomerProfile = {
   phone: string | null
 }
 
-export default async function CustomerProfilePage() {
+export default async function CustomerProfilePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ setup?: string | string[] }>
+}) {
+  const resolvedSearchParams = await searchParams
+  const isSetupMode = resolvedSearchParams.setup === "1"
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
@@ -31,21 +37,23 @@ export default async function CustomerProfilePage() {
     <main className="bg-zinc-50 px-4 py-12 sm:px-6 sm:py-16">
       <section className="mx-auto w-full max-w-2xl rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
         <Link
-          href="/account"
+          href={isSetupMode ? "/" : "/account"}
           className="inline-flex items-center gap-2 rounded-lg text-sm font-semibold text-zinc-600 transition-colors hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />
-          Back to account
+          {isSetupMode ? "Back to shopping" : "Back to account"}
         </Link>
 
         <span className="mt-6 flex size-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
           <UserRound className="size-7" aria-hidden="true" />
         </span>
         <h1 className="mt-5 text-3xl font-semibold tracking-tight text-zinc-900">
-          Customer Profile
+          {isSetupMode ? "Complete your account" : "Customer Profile"}
         </h1>
         <p className="mt-2 text-sm leading-6 text-zinc-600">
-          Add the contact details you want associated with your account.
+          {isSetupMode
+            ? "Add your name and phone number before continuing to checkout."
+            : "Keep your required name and phone number up to date."}
         </p>
 
         <div className="mt-8 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
@@ -71,6 +79,7 @@ export default async function CustomerProfilePage() {
           <ProfileForm
             initialFullName={profile?.full_name ?? ""}
             initialPhone={profile?.phone ?? ""}
+            isSetupMode={isSetupMode}
           />
         )}
       </section>

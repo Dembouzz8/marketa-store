@@ -1,7 +1,7 @@
 "use client"
 
-import { Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react"
-import { useState } from "react"
+import { Loader2, Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react"
+import { useMemo, useState } from "react"
 
 import { CheckoutModal } from "@/components/checkout-modal"
 import { ProductImage } from "@/components/product-image"
@@ -14,11 +14,27 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { useCartStore } from "@/lib/store"
 import { formatNaira, getProductImage } from "@/lib/utils"
 
+type CustomerProfileReadiness = {
+  full_name: string | null
+  phone: string | null
+}
+
+function isProfileComplete(profile: CustomerProfileReadiness | null) {
+  return Boolean(profile?.full_name?.trim() && profile.phone?.trim())
+}
+
 export function CartSidebar() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false)
+  const [isCheckingCheckoutAccess, setIsCheckingCheckoutAccess] =
+    useState(false)
+  const [checkoutGateError, setCheckoutGateError] = useState<string | null>(
+    null
+  )
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const items = useCartStore((state) => state.items)
   const isCartOpen = useCartStore((state) => state.isCartOpen)
   const setCartOpen = useCartStore((state) => state.setCartOpen)
@@ -26,6 +42,61 @@ export function CartSidebar() {
   const updateQuantity = useCartStore((state) => state.updateQuantity)
   const totalItems = useCartStore((state) => state.totalItems())
   const totalPrice = useCartStore((state) => state.totalPrice())
+
+  const handleProceedToCheckout = async () => {
+    if (isCheckingCheckoutAccess) return
+
+    setIsCheckingCheckoutAccess(true)
+    setCheckoutGateError(null)
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
+
+      if (userError) {
+        setCheckoutGateError(
+          "We couldn't verify your account right now. Please try again."
+        )
+        return
+      }
+
+      if (!user) {
+        setCartOpen(false)
+        window.location.assign("/account/login?checkout=1")
+        return
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("customer_profiles")
+        .select("full_name, phone")
+        .eq("user_id", user.id)
+        .maybeSingle()
+
+      if (profileError) {
+        setCheckoutGateError(
+          "We couldn't verify your profile right now. Please try again."
+        )
+        return
+      }
+
+      if (!isProfileComplete(profile as CustomerProfileReadiness | null)) {
+        setCartOpen(false)
+        window.location.assign("/account/profile?setup=1")
+        return
+      }
+
+      setCartOpen(false)
+      setIsCheckoutOpen(true)
+    } catch {
+      setCheckoutGateError(
+        "We couldn't verify your account right now. Please try again."
+      )
+    } finally {
+      setIsCheckingCheckoutAccess(false)
+    }
+  }
 
   return (
     <>
@@ -158,16 +229,33 @@ export function CartSidebar() {
                 <p className="text-xs text-zinc-500">
                   Shipping calculated at checkout
                 </p>
+                {checkoutGateError && (
+                  <p
+                    role="alert"
+                    aria-live="assertive"
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-5 text-red-700"
+                  >
+                    {checkoutGateError}
+                  </p>
+                )}
                 <Separator />
                 <Button
                   type="button"
-                  onClick={() => {
-                    setCartOpen(false)
-                    setIsCheckoutOpen(true)
-                  }}
+                  onClick={handleProceedToCheckout}
+                  disabled={isCheckingCheckoutAccess}
                   className="h-auto w-full rounded-lg bg-amber-500 py-3 font-semibold text-zinc-900 hover:bg-amber-400"
                 >
-                  Proceed to Checkout
+                  {isCheckingCheckoutAccess ? (
+                    <>
+                      <Loader2
+                        className="mr-2 size-4 animate-spin"
+                        aria-hidden="true"
+                      />
+                      Checking account...
+                    </>
+                  ) : (
+                    "Proceed to Checkout"
+                  )}
                 </Button>
                 <Button
                   type="button"

@@ -15,6 +15,7 @@ import {
 type ProfileFormProps = {
   initialFullName: string
   initialPhone: string
+  isSetupMode: boolean
 }
 
 const inputClassName =
@@ -23,6 +24,7 @@ const inputClassName =
 export function ProfileForm({
   initialFullName,
   initialPhone,
+  isSetupMode,
 }: ProfileFormProps) {
   const [fullName, setFullName] = useState(initialFullName)
   const [phone, setPhone] = useState(initialPhone)
@@ -43,6 +45,11 @@ export function ProfileForm({
       if (nextResult.status === "success" && nextResult.values) {
         setFullName(nextResult.values.full_name)
         setPhone(nextResult.values.phone)
+
+        if (isSetupMode) {
+          window.location.assign("/")
+          return
+        }
       }
 
       requestAnimationFrame(() => resultRef.current?.focus())
@@ -71,12 +78,14 @@ export function ProfileForm({
         <legend className="sr-only">Customer profile details</legend>
 
         <div>
-          <Label htmlFor="full_name">Full Name</Label>
+          <Label htmlFor="full_name">Full Name (required)</Label>
           <Input
             id="full_name"
             name="full_name"
             autoComplete="name"
             maxLength={120}
+            minLength={1}
+            required
             value={fullName}
             onChange={(event) => {
               setFullName(event.target.value)
@@ -94,13 +103,13 @@ export function ProfileForm({
             </p>
           ) : (
             <p id="full_name-help" className="mt-1.5 text-xs text-zinc-500">
-              Optional, up to 120 characters.
+              Required, 1 to 120 characters.
             </p>
           )}
         </div>
 
         <div>
-          <Label htmlFor="phone">Phone Number</Label>
+          <Label htmlFor="phone">Phone Number (required)</Label>
           <Input
             id="phone"
             name="phone"
@@ -108,6 +117,8 @@ export function ProfileForm({
             inputMode="tel"
             autoComplete="tel"
             maxLength={32}
+            minLength={1}
+            required
             value={phone}
             onChange={(event) => {
               setPhone(event.target.value)
@@ -125,7 +136,8 @@ export function ProfileForm({
             </p>
           ) : (
             <p id="phone-help" className="mt-1.5 text-xs text-zinc-500">
-              Optional. Include a country code when appropriate.
+              Required, 1 to 32 characters. Include a country code when
+              appropriate.
             </p>
           )}
         </div>
