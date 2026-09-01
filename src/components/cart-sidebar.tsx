@@ -51,6 +51,24 @@ export function CartSidebar() {
 
     try {
       const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession()
+
+      if (sessionError) {
+        setCheckoutGateError(
+          "We couldn't verify your account right now. Please try again."
+        )
+        return
+      }
+
+      if (!session?.access_token?.trim()) {
+        setCartOpen(false)
+        window.location.assign("/account/login?checkout=1")
+        return
+      }
+
+      const {
         data: { user },
         error: userError,
       } = await supabase.auth.getUser()
@@ -63,8 +81,9 @@ export function CartSidebar() {
       }
 
       if (!user) {
-        setCartOpen(false)
-        window.location.assign("/account/login?checkout=1")
+        setCheckoutGateError(
+          "We couldn't verify your account right now. Please try again."
+        )
         return
       }
 

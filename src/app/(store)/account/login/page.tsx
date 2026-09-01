@@ -92,7 +92,7 @@ function CustomerLoginForm() {
           </h1>
           <p className="mt-2 text-sm leading-6 text-zinc-600">
             {isCheckoutFlow
-              ? "Sign in to continue to checkout."
+              ? "Sign in or create an account to continue to checkout."
               : "Sign in to your Marketa customer account."}
           </p>
         </div>

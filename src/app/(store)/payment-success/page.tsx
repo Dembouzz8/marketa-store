@@ -79,7 +79,6 @@ function PaymentSuccessContent() {
     callbackIsValid ? "verifying" : "unknown"
   )
   const [verificationRun, setVerificationRun] = useState(0)
-  const items = useCartStore((state) => state.items)
   const clearCart = useCartStore((state) => state.clearCart)
   const hasHydratedCart = useSyncExternalStore(
     subscribeToCartHydration,
@@ -148,31 +147,48 @@ function PaymentSuccessContent() {
     if (view !== "confirmed" || !hasHydratedCart) return
 
     const checkoutKey = `${orderId}:${reference}`
-    if (completedCheckoutRef.current === checkoutKey) return
-    completedCheckoutRef.current = checkoutKey
+    let cancelled = false
 
-    const pendingCheckout = readPendingCheckout(orderId, reference)
-    if (
-      pendingCheckout &&
-      pendingCheckout.cart_fingerprint === createCartFingerprint(items)
-    ) {
-      clearCart()
-    }
-    if (pendingCheckout) {
-      removeCheckoutAttemptForCart(pendingCheckout.cart_fingerprint)
-    }
-    removePendingCheckout(orderId, reference)
+    const finalizeConfirmedCheckout = async () => {
+      try {
+        await useCartStore.persist.rehydrate()
+      } catch {
+        return
+      }
 
-    confetti({
-      particleCount: 150,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ["#f59e0b", "#18181b", "#ffffff", "#10b981"],
-    })
+      if (cancelled || completedCheckoutRef.current === checkoutKey) {
+        return
+      }
+      completedCheckoutRef.current = checkoutKey
+
+      const pendingCheckout = readPendingCheckout(orderId, reference)
+      if (pendingCheckout) {
+        const currentCartFingerprint = createCartFingerprint(
+          useCartStore.getState().items
+        )
+        if (pendingCheckout.cart_fingerprint === currentCartFingerprint) {
+          clearCart()
+        }
+        removeCheckoutAttemptForCart(pendingCheckout.cart_fingerprint)
+        removePendingCheckout(orderId, reference)
+      }
+
+      confetti({
+        particleCount: 150,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ["#f59e0b", "#18181b", "#ffffff", "#10b981"],
+      })
+    }
+
+    void finalizeConfirmedCheckout()
+
+    return () => {
+      cancelled = true
+    }
   }, [
     clearCart,
     hasHydratedCart,
-    items,
     orderId,
     reference,
     view,
