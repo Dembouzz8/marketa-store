@@ -36,9 +36,6 @@ export interface CartItem {
 }
 
 export interface CheckoutFormData {
-  full_name: string
-  customer_email: string
-  customer_phone: string
   shipping_address: {
     address: string
     city: string
@@ -48,9 +45,6 @@ export interface CheckoutFormData {
 
 export interface CheckoutPayload {
   checkout_attempt_id: string
-  customer_name: string
-  customer_email: string
-  customer_phone: string
   items: { product_id: string; quantity: number }[]
   shipping_address: {
     address: string
@@ -63,7 +57,9 @@ export type CheckoutErrorCode =
   | "INVALID_REQUEST"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "PAYLOAD_TOO_LARGE"
-  | "INVALID_CONTACT"
+  | "AUTH_REQUIRED"
+  | "PROFILE_INCOMPLETE"
+  | "AUTH_SERVICE_UNAVAILABLE"
   | "INVALID_SHIPPING_ADDRESS"
   | "INVALID_ITEMS"
   | "DUPLICATE_PRODUCT"

@@ -1,14 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import {
-  Check,
-  Loader2,
-  Mail,
-  MapPin,
-  Phone,
-  User,
-} from "lucide-react"
+import { Check, Loader2, MapPin } from "lucide-react"
+import { useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -31,6 +24,7 @@ import {
   removeCheckoutAttempt,
   savePendingCheckout,
 } from "@/lib/payment-recovery"
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { useCartStore } from "@/lib/store"
 import { cn, formatNaira } from "@/lib/utils"
 import type {
@@ -87,7 +81,6 @@ const states = [
   "Zamfara",
 ]
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -102,28 +95,6 @@ class CheckoutUiError extends Error {
 
 function normalizeWhitespace(value: string) {
   return value.trim().replace(/\s+/g, " ")
-}
-
-function normalizeContact(formData: CheckoutFormData) {
-  return {
-    customer_name: normalizeWhitespace(formData.full_name),
-    customer_email: formData.customer_email.trim().toLowerCase(),
-    customer_phone: formData.customer_phone.replace(/\D/g, ""),
-  }
-}
-
-function isValidContact(formData: CheckoutFormData) {
-  const contact = normalizeContact(formData)
-  return (
-    contact.customer_name.length >= 2 &&
-    contact.customer_name.length <= 100 &&
-    contact.customer_email.length >= 3 &&
-    contact.customer_email.length <= 254 &&
-    EMAIL_PATTERN.test(contact.customer_email) &&
-    formData.customer_phone.trim().length <= 32 &&
-    contact.customer_phone.length >= 7 &&
-    contact.customer_phone.length <= 15
-  )
 }
 
 function normalizeShippingAddress(formData: CheckoutFormData) {
@@ -190,8 +161,6 @@ function checkoutErrorMessage(code: string): string {
       return "One or more products are no longer available."
     case "VENDOR_UNAVAILABLE":
       return "One or more sellers are currently unavailable."
-    case "INVALID_CONTACT":
-      return "Check your name, email address and phone number."
     case "INVALID_SHIPPING_ADDRESS":
       return "Check your delivery address and state."
     case "INVALID_ITEMS":
@@ -208,6 +177,7 @@ function checkoutErrorMessage(code: string): string {
     case "INVALID_CHECKOUT_ATTEMPT":
       return "Checkout could not be started. Please try again."
     case "PAYMENT_INITIALIZATION_FAILED":
+    case "AUTH_SERVICE_UNAVAILABLE":
     case "SERVICE_UNAVAILABLE":
       return "Checkout is temporarily unavailable. Please try again."
     case "UNSUPPORTED_MEDIA_TYPE":
@@ -221,9 +191,6 @@ function checkoutErrorMessage(code: string): string {
 }
 
 const initialFormData: CheckoutFormData = {
-  full_name: "",
-  customer_email: "",
-  customer_phone: "",
   shipping_address: {
     address: "",
     city: "",
@@ -232,6 +199,7 @@ const initialFormData: CheckoutFormData = {
 }
 
 export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [step, setStep] = useState<CheckoutStep>(1)
   const [formData, setFormData] =
     useState<CheckoutFormData>(initialFormData)
@@ -243,27 +211,12 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   const nextStep = () => {
     setError(null)
 
-    if (step === 1 && !isValidContact(formData)) {
-      setError("Check your name, email address and phone number.")
-      return
-    }
-
     if (step === 2 && !isValidShippingAddress(formData)) {
       setError("Check your delivery address and state.")
       return
     }
 
     setStep((currentStep) => Math.min(currentStep + 1, 3) as CheckoutStep)
-  }
-
-  const updateContactField = (
-    field: keyof Pick<
-      CheckoutFormData,
-      "full_name" | "customer_email" | "customer_phone"
-    >,
-    value: string
-  ) => {
-    setFormData((current) => ({ ...current, [field]: value }))
   }
 
   const updateAddressField = (
@@ -280,11 +233,6 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   }
 
   const handlePayment = async () => {
-    if (!isValidContact(formData)) {
-      setError("Check your name, email address and phone number.")
-      return
-    }
-
     if (!isValidShippingAddress(formData)) {
       setError("Check your delivery address and state.")
       return
@@ -310,19 +258,6 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
     setIsLoading(true)
     setError(null)
 
-    const contact = normalizeContact(formData)
-    const cartFingerprint = createCartFingerprint(items)
-    const checkoutAttempt = obtainCheckoutAttempt(cartFingerprint)
-    const payload: CheckoutPayload = {
-      checkout_attempt_id: checkoutAttempt.checkout_attempt_id,
-      ...contact,
-      items: items.map((item) => ({
-        product_id: item.product.id,
-        quantity: item.quantity,
-      })),
-      shipping_address: normalizeShippingAddress(formData),
-    }
-
     try {
       const webhookUrl = process.env.NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL
 
@@ -330,9 +265,40 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         throw new Error("Checkout webhook URL is not configured.")
       }
 
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession()
+
+      if (sessionError) {
+        throw new CheckoutUiError(
+          "We couldn't verify your account right now. Please try again."
+        )
+      }
+
+      const accessToken = session?.access_token?.trim()
+      if (!accessToken) {
+        setIsLoading(false)
+        onOpenChange(false)
+        window.location.assign("/account/login?checkout=1")
+        return
+      }
+
+      const cartFingerprint = createCartFingerprint(items)
+      const checkoutAttempt = obtainCheckoutAttempt(cartFingerprint)
+      const payload: CheckoutPayload = {
+        checkout_attempt_id: checkoutAttempt.checkout_attempt_id,
+        items: items.map((item) => ({
+          product_id: item.product.id,
+          quantity: item.quantity,
+        })),
+        shipping_address: normalizeShippingAddress(formData),
+      }
+
       const response = await fetch(webhookUrl, {
         method: "POST",
         headers: {
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
@@ -342,6 +308,20 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
 
       if (!response.ok) {
         if (isCheckoutErrorResponse(data)) {
+          if (data.error.code === "AUTH_REQUIRED") {
+            setIsLoading(false)
+            onOpenChange(false)
+            window.location.assign("/account/login?checkout=1")
+            return
+          }
+
+          if (data.error.code === "PROFILE_INCOMPLETE") {
+            setIsLoading(false)
+            onOpenChange(false)
+            window.location.assign("/account/profile?setup=1")
+            return
+          }
+
           if (
             data.error.code === "CHECKOUT_ATTEMPT_CONFLICT" ||
             data.error.code === "CHECKOUT_EXPIRED" ||
@@ -435,7 +415,7 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
             Checkout
           </DialogTitle>
           <DialogDescription>
-            Complete your details to pay securely with Paystack.
+            Confirm your delivery details to pay securely with Paystack.
           </DialogDescription>
         </DialogHeader>
 
@@ -452,33 +432,15 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
 
           {step === 1 && (
             <div className="space-y-4">
-              <IconInput
-                id="full_name"
-                label="Full Name"
-                icon={User}
-                value={formData.full_name}
-                onChange={(value) => updateContactField("full_name", value)}
-              />
-              <IconInput
-                id="customer_email"
-                label="Email"
-                type="email"
-                icon={Mail}
-                value={formData.customer_email}
-                onChange={(value) =>
-                  updateContactField("customer_email", value)
-                }
-              />
-              <IconInput
-                id="customer_phone"
-                label="Phone"
-                placeholder="+2348..."
-                icon={Phone}
-                value={formData.customer_phone}
-                onChange={(value) =>
-                  updateContactField("customer_phone", value)
-                }
-              />
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                <h3 className="font-semibold text-zinc-900">
+                  Account contact details
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  Marketa will use the verified name, email address and phone
+                  number saved to your customer account for this order.
+                </p>
+              </div>
               <Button
                 type="button"
                 onClick={nextStep}
@@ -572,10 +534,11 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
               </div>
 
               <div className="grid gap-3 text-sm sm:grid-cols-2">
-                <Recap title="Contact">
-                  <p>{formData.full_name}</p>
-                  <p>{formData.customer_email}</p>
-                  <p>{formData.customer_phone}</p>
+                <Recap title="Account contact">
+                  <p>
+                    Your verified account contact details will be saved with
+                    this order.
+                  </p>
                 </Recap>
                 <Recap title="Delivery">
                   <p>{formData.shipping_address.address}</p>
@@ -623,7 +586,7 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
 
 function StepIndicator({ step }: { step: CheckoutStep }) {
   const steps = [
-    { number: 1, label: "Contact" },
+    { number: 1, label: "Account" },
     { number: 2, label: "Delivery" },
     { number: 3, label: "Summary" },
   ] as const

@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
+import {
+  createClient,
+  type SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2.38.0"
 
 const MAX_BODY_BYTES = 32 * 1024
 const MAX_ITEMS = 50
@@ -9,12 +12,8 @@ const CHECKOUT_REUSE_WINDOW_MS = 30 * 60 * 1000
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const REFERENCE_PATTERN = /^[A-Za-z0-9._=-]{1,100}$/
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CHECKOUT_FIELDS = new Set([
   "checkout_attempt_id",
-  "customer_name",
-  "customer_email",
-  "customer_phone",
   "shipping_address",
   "items",
 ])
@@ -71,7 +70,9 @@ type CheckoutErrorCode =
   | "INVALID_REQUEST"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "PAYLOAD_TOO_LARGE"
-  | "INVALID_CONTACT"
+  | "AUTH_REQUIRED"
+  | "PROFILE_INCOMPLETE"
+  | "AUTH_SERVICE_UNAVAILABLE"
   | "INVALID_SHIPPING_ADDRESS"
   | "INVALID_ITEMS"
   | "DUPLICATE_PRODUCT"
@@ -94,15 +95,19 @@ type ValidatedItem = {
 
 type ValidatedCheckout = {
   checkout_attempt_id: string
-  customer_name: string
-  customer_email: string
-  customer_phone: string
   shipping_address: {
     address: string
     city: string
     state: string
   }
   items: ValidatedItem[]
+}
+
+type TrustedCustomer = {
+  id: string
+  email: string
+  name: string
+  phone: string
 }
 
 type ValidationResult =
@@ -170,6 +175,28 @@ function hasLengthBetween(value: string, minimum: number, maximum: number) {
   return value.length >= minimum && value.length <= maximum
 }
 
+function parseBearerToken(req: Request): string | null {
+  const authorization = req.headers.get("authorization")
+  if (!authorization) return null
+
+  const match = /^Bearer ([^\s]+)$/.exec(authorization)
+  return match?.[1] ?? null
+}
+
+function authErrorStatus(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null
+
+  const status = Reflect.get(error, "status")
+  return typeof status === "number" && Number.isInteger(status)
+    ? status
+    : null
+}
+
+function isCredentialAuthError(error: unknown): boolean {
+  const status = authErrorStatus(error)
+  return status !== null && status >= 400 && status < 500 && status !== 429
+}
+
 function validateCheckout(value: unknown): ValidationResult {
   if (!isPlainObject(value)) {
     return {
@@ -189,17 +216,6 @@ function validateCheckout(value: unknown): ValidationResult {
     }
   }
 
-  const customerName =
-    typeof value.customer_name === "string"
-      ? normalizeWhitespace(value.customer_name)
-      : ""
-  const customerEmail =
-    typeof value.customer_email === "string"
-      ? value.customer_email.trim().toLowerCase()
-      : ""
-  const phoneInput =
-    typeof value.customer_phone === "string" ? value.customer_phone.trim() : ""
-  const customerPhone = phoneInput.replace(/\D/g, "")
   const checkoutAttemptId =
     typeof value.checkout_attempt_id === "string"
       ? value.checkout_attempt_id.toLowerCase()
@@ -210,21 +226,6 @@ function validateCheckout(value: unknown): ValidationResult {
       ok: false,
       code: "INVALID_CHECKOUT_ATTEMPT",
       message: "The checkout attempt is invalid.",
-      status: 400,
-    }
-  }
-
-  if (
-    !hasLengthBetween(customerName, 2, 100) ||
-    !hasLengthBetween(customerEmail, 3, 254) ||
-    !EMAIL_PATTERN.test(customerEmail) ||
-    phoneInput.length > 32 ||
-    !hasLengthBetween(customerPhone, 7, 15)
-  ) {
-    return {
-      ok: false,
-      code: "INVALID_CONTACT",
-      message: "Check your name, email address and phone number.",
       status: 400,
     }
   }
@@ -325,9 +326,6 @@ function validateCheckout(value: unknown): ValidationResult {
     ok: true,
     value: {
       checkout_attempt_id: checkoutAttemptId,
-      customer_name: customerName,
-      customer_email: customerEmail,
-      customer_phone: customerPhone,
       shipping_address: { address, city, state },
       items,
     },
@@ -407,12 +405,14 @@ function validAuthorizationUrl(value: unknown): value is string {
 }
 
 async function createRequestFingerprint(
-  checkout: ValidatedCheckout
+  checkout: ValidatedCheckout,
+  customer: TrustedCustomer
 ): Promise<string> {
   const canonicalRequest = JSON.stringify({
-    customer_name: checkout.customer_name,
-    customer_email: checkout.customer_email,
-    customer_phone: checkout.customer_phone,
+    customer_id: customer.id,
+    customer_email: customer.email,
+    customer_name: customer.name,
+    customer_phone: customer.phone,
     shipping_address: {
       address: checkout.shipping_address.address,
       city: checkout.shipping_address.city,
@@ -432,12 +432,13 @@ async function createRequestFingerprint(
   ).join("")
 }
 
-type CheckoutSupabaseClient = ReturnType<typeof createClient>
+type CheckoutSupabaseClient = SupabaseClient
 
 async function existingAttemptResponse(
   supabase: CheckoutSupabaseClient,
   checkoutAttemptId: string,
-  requestFingerprint: string
+  requestFingerprint: string,
+  customerId: string
 ): Promise<Response | null> {
   const { data: attempt, error: attemptError } = await supabase
     .from("checkout_attempts")
@@ -460,7 +461,7 @@ async function existingAttemptResponse(
   if (!attempt) {
     const { data: reservedOrder, error: reservedOrderError } = await supabase
       .from("orders")
-      .select("id")
+      .select("id, customer_id")
       .eq("checkout_attempt_id", checkoutAttemptId)
       .maybeSingle()
 
@@ -474,14 +475,25 @@ async function existingAttemptResponse(
       )
     }
 
-    return reservedOrder
-      ? errorResponse(
-          "CHECKOUT_INITIALIZING",
-          "Checkout is still being prepared.",
-          409,
-          2000
-        )
-      : null
+    if (!reservedOrder) return null
+
+    if (
+      typeof reservedOrder.customer_id !== "string" ||
+      reservedOrder.customer_id.toLowerCase() !== customerId
+    ) {
+      return errorResponse(
+        "CHECKOUT_ATTEMPT_CONFLICT",
+        "This checkout attempt belongs to a different customer context.",
+        409
+      )
+    }
+
+    return errorResponse(
+      "CHECKOUT_INITIALIZING",
+      "Checkout is still being prepared.",
+      409,
+      2000
+    )
   }
 
   if (attempt.request_fingerprint !== requestFingerprint) {
@@ -495,7 +507,7 @@ async function existingAttemptResponse(
   const orderId = String(attempt.order_id)
   const { data: order, error: orderError } = await supabase
     .from("orders")
-    .select("id, status, payment_ref")
+    .select("id, customer_id, status, payment_ref")
     .eq("id", orderId)
     .eq("checkout_attempt_id", checkoutAttemptId)
     .maybeSingle()
@@ -511,6 +523,17 @@ async function existingAttemptResponse(
       "Checkout is temporarily unavailable. Please try again.",
       503,
       2000
+    )
+  }
+
+  if (
+    typeof order.customer_id !== "string" ||
+    order.customer_id.toLowerCase() !== customerId
+  ) {
+    return errorResponse(
+      "CHECKOUT_ATTEMPT_CONFLICT",
+      "This checkout attempt belongs to a different customer context.",
+      409
     )
   }
 
@@ -651,12 +674,129 @@ async function handleCheckout(req: Request): Promise<Response> {
 
   const {
     checkout_attempt_id: checkoutAttemptId,
-    customer_name: customerName,
-    customer_email: customerEmail,
-    customer_phone: customerPhone,
     shipping_address: shippingAddress,
     items,
   } = validation.value
+
+  const accessToken = parseBearerToken(req)
+  if (!accessToken) {
+    return errorResponse(
+      "AUTH_REQUIRED",
+      "Sign in to your customer account to continue checkout.",
+      401
+    )
+  }
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  )
+
+  let verifiedUser: { id: string; email?: string | null } | null = null
+  try {
+    const { data, error: authError } = await supabase.auth.getUser(accessToken)
+
+    if (authError) {
+      if (isCredentialAuthError(authError)) {
+        return errorResponse(
+          "AUTH_REQUIRED",
+          "Sign in to your customer account to continue checkout.",
+          401
+        )
+      }
+
+      logOperationFailure("verify_customer_auth", "AUTH_SERVICE_UNAVAILABLE")
+      return errorResponse(
+        "AUTH_SERVICE_UNAVAILABLE",
+        "We couldn't verify your account right now. Please try again.",
+        503,
+        2000
+      )
+    }
+
+    verifiedUser = data.user
+  } catch {
+    logOperationFailure("verify_customer_auth", "AUTH_SERVICE_UNAVAILABLE")
+    return errorResponse(
+      "AUTH_SERVICE_UNAVAILABLE",
+      "We couldn't verify your account right now. Please try again.",
+      503,
+      2000
+    )
+  }
+
+  const verifiedCustomerId =
+    typeof verifiedUser?.id === "string" ? verifiedUser.id.toLowerCase() : ""
+  const customerEmail =
+    typeof verifiedUser?.email === "string"
+      ? verifiedUser.email.trim().toLowerCase()
+      : ""
+
+  if (!UUID_PATTERN.test(verifiedCustomerId) || !customerEmail) {
+    return errorResponse(
+      "AUTH_REQUIRED",
+      "Sign in to your customer account to continue checkout.",
+      401
+    )
+  }
+
+  let profile: { full_name: string | null; phone: string | null } | null = null
+  try {
+    const { data, error: profileError } = await supabase
+      .from("customer_profiles")
+      .select("full_name, phone")
+      .eq("user_id", verifiedCustomerId)
+      .maybeSingle()
+
+    if (profileError) {
+      logOperationFailure(
+        "verify_customer_profile",
+        "AUTH_SERVICE_UNAVAILABLE"
+      )
+      return errorResponse(
+        "AUTH_SERVICE_UNAVAILABLE",
+        "We couldn't verify your profile right now. Please try again.",
+        503,
+        2000
+      )
+    }
+
+    profile = data
+  } catch {
+    logOperationFailure(
+      "verify_customer_profile",
+      "AUTH_SERVICE_UNAVAILABLE"
+    )
+    return errorResponse(
+      "AUTH_SERVICE_UNAVAILABLE",
+      "We couldn't verify your profile right now. Please try again.",
+      503,
+      2000
+    )
+  }
+
+  const customerName =
+    typeof profile?.full_name === "string" ? profile.full_name.trim() : ""
+  const customerPhone =
+    typeof profile?.phone === "string" ? profile.phone.trim() : ""
+
+  if (
+    !hasLengthBetween(customerName, 1, 120) ||
+    !hasLengthBetween(customerPhone, 1, 32)
+  ) {
+    return errorResponse(
+      "PROFILE_INCOMPLETE",
+      "Complete your customer profile before continuing checkout.",
+      403
+    )
+  }
+
+  const trustedCustomer: TrustedCustomer = {
+    id: verifiedCustomerId,
+    email: customerEmail,
+    name: customerName,
+    phone: customerPhone,
+  }
 
   const storefrontUrl = Deno.env.get("STOREFRONT_URL")
   let storefrontOrigin: URL
@@ -672,15 +812,15 @@ async function handleCheckout(req: Request): Promise<Response> {
     )
   }
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  const requestFingerprint = await createRequestFingerprint(
+    validation.value,
+    trustedCustomer
   )
-  const requestFingerprint = await createRequestFingerprint(validation.value)
   const existingAttempt = await existingAttemptResponse(
     supabase,
     checkoutAttemptId,
-    requestFingerprint
+    requestFingerprint,
+    verifiedCustomerId
   )
   if (existingAttempt) return existingAttempt
 
@@ -818,6 +958,7 @@ async function handleCheckout(req: Request): Promise<Response> {
     .from("orders")
     .insert({
       checkout_attempt_id: checkoutAttemptId,
+      customer_id: verifiedCustomerId,
       customer_name: customerName,
       customer_email: customerEmail,
       customer_phone: customerPhone,
@@ -834,7 +975,8 @@ async function handleCheckout(req: Request): Promise<Response> {
       const racedAttempt = await existingAttemptResponse(
         supabase,
         checkoutAttemptId,
-        requestFingerprint
+        requestFingerprint,
+        verifiedCustomerId
       )
       if (racedAttempt) return racedAttempt
     }
