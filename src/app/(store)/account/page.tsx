@@ -1,5 +1,11 @@
 import Link from "next/link"
-import { ArrowRight, ClipboardList, LogOut, UserRound } from "lucide-react"
+import {
+  ArrowRight,
+  ClipboardList,
+  LogOut,
+  MapPin,
+  UserRound,
+} from "lucide-react"
 import { redirect } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
@@ -75,6 +81,29 @@ export default async function CustomerAccountPage() {
                 </span>
                 <span className="mt-0.5 block text-sm text-zinc-500">
                   Review purchases made with your account.
+                </span>
+              </span>
+            </span>
+            <ArrowRight
+              className="size-5 shrink-0 text-zinc-400"
+              aria-hidden="true"
+            />
+          </Link>
+
+          <Link
+            href="/account/addresses"
+            className="flex items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white p-4 transition-colors hover:border-amber-400 hover:bg-amber-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-700">
+                <MapPin className="size-5" aria-hidden="true" />
+              </span>
+              <span>
+                <span className="block font-semibold text-zinc-900">
+                  Saved Addresses
+                </span>
+                <span className="mt-0.5 block text-sm text-zinc-500">
+                  Add and manage your delivery addresses.
                 </span>
               </span>
             </span>
