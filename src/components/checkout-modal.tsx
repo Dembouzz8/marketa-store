@@ -1,7 +1,7 @@
 "use client"
 
 import { Check, Loader2, MapPin } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -24,6 +24,7 @@ import {
   removeCheckoutAttempt,
   savePendingCheckout,
 } from "@/lib/payment-recovery"
+import { NIGERIAN_STATES } from "@/lib/nigerian-states"
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { useCartStore } from "@/lib/store"
 import { cn, formatNaira } from "@/lib/utils"
@@ -41,45 +42,14 @@ interface CheckoutModalProps {
 
 type CheckoutStep = 1 | 2 | 3
 
-const states = [
-  "Abia",
-  "Adamawa",
-  "Akwa Ibom",
-  "Anambra",
-  "Bauchi",
-  "Bayelsa",
-  "Benue",
-  "Borno",
-  "Cross River",
-  "Delta",
-  "Ebonyi",
-  "Edo",
-  "Ekiti",
-  "Enugu",
-  "Federal Capital Territory",
-  "Gombe",
-  "Imo",
-  "Jigawa",
-  "Kaduna",
-  "Kano",
-  "Katsina",
-  "Kebbi",
-  "Kogi",
-  "Kwara",
-  "Lagos",
-  "Nasarawa",
-  "Niger",
-  "Ogun",
-  "Ondo",
-  "Osun",
-  "Oyo",
-  "Plateau",
-  "Rivers",
-  "Sokoto",
-  "Taraba",
-  "Yobe",
-  "Zamfara",
-]
+type SavedAddress = {
+  id: string
+  label: string
+  address: string
+  city: string
+  state: string
+  is_default: boolean
+}
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -105,6 +75,24 @@ function normalizeShippingAddress(formData: CheckoutFormData) {
   }
 }
 
+function isShippingDraftBlank(
+  shippingAddress: CheckoutFormData["shipping_address"]
+) {
+  return (
+    !shippingAddress.address.trim() &&
+    !shippingAddress.city.trim() &&
+    !shippingAddress.state.trim()
+  )
+}
+
+function savedAddressSnapshot(savedAddress: SavedAddress) {
+  return {
+    address: savedAddress.address,
+    city: savedAddress.city,
+    state: savedAddress.state,
+  }
+}
+
 function isValidShippingAddress(formData: CheckoutFormData) {
   const address = normalizeShippingAddress(formData)
   return (
@@ -112,7 +100,7 @@ function isValidShippingAddress(formData: CheckoutFormData) {
     address.address.length <= 300 &&
     address.city.length >= 2 &&
     address.city.length <= 100 &&
-    states.includes(address.state)
+    (NIGERIAN_STATES as readonly string[]).includes(address.state)
   )
 }
 
@@ -203,10 +191,95 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   const [step, setStep] = useState<CheckoutStep>(1)
   const [formData, setFormData] =
     useState<CheckoutFormData>(initialFormData)
+  const shippingDraftRef = useRef(formData.shipping_address)
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([])
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(
+    null
+  )
+  const [isLoadingSavedAddresses, setIsLoadingSavedAddresses] =
+    useState(true)
+  const [savedAddressError, setSavedAddressError] = useState<string | null>(
+    null
+  )
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const items = useCartStore((state) => state.items)
   const totalPrice = useCartStore((state) => state.totalPrice())
+
+  useEffect(() => {
+    if (!open) return
+
+    let isActive = true
+
+    const loadSavedAddresses = async () => {
+      try {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser()
+
+        if (!isActive) return
+
+        if (userError || !user) {
+          setSavedAddressError(
+            "Saved addresses aren't available right now. Enter your delivery address manually."
+          )
+          return
+        }
+
+        const { data, error: addressError } = await supabase
+          .from("customer_addresses")
+          .select("id, label, address, city, state, is_default")
+          .eq("user_id", user.id)
+          .order("is_default", { ascending: false })
+          .order("label", { ascending: true })
+          .order("id", { ascending: true })
+
+        if (!isActive) return
+
+        if (addressError) {
+          setSavedAddressError(
+            "Saved addresses aren't available right now. Enter your delivery address manually."
+          )
+          return
+        }
+
+        const addresses = (data ?? []) as SavedAddress[]
+        setSavedAddresses(addresses)
+
+        const defaultAddress = addresses.find(
+          (address) => address.is_default
+        )
+
+        if (
+          defaultAddress &&
+          isShippingDraftBlank(shippingDraftRef.current)
+        ) {
+          const snapshot = savedAddressSnapshot(defaultAddress)
+          shippingDraftRef.current = snapshot
+          setFormData((current) => ({
+            ...current,
+            shipping_address: snapshot,
+          }))
+          setSelectedAddressId(defaultAddress.id)
+        }
+      } catch {
+        if (isActive) {
+          setSavedAddressError(
+            "Saved addresses aren't available right now. Enter your delivery address manually."
+          )
+        }
+      } finally {
+        if (isActive) setIsLoadingSavedAddresses(false)
+      }
+    }
+
+    void loadSavedAddresses()
+
+    return () => {
+      isActive = false
+    }
+  }, [open, supabase])
 
   const nextStep = () => {
     setError(null)
@@ -223,13 +296,42 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
     field: keyof CheckoutFormData["shipping_address"],
     value: string
   ) => {
+    const shippingAddress = {
+      ...shippingDraftRef.current,
+      [field]: value,
+    }
+    shippingDraftRef.current = shippingAddress
     setFormData((current) => ({
       ...current,
-      shipping_address: {
-        ...current.shipping_address,
-        [field]: value,
-      },
+      shipping_address: shippingAddress,
     }))
+  }
+
+  const selectSavedAddress = (savedAddress: SavedAddress) => {
+    const snapshot = savedAddressSnapshot(savedAddress)
+    shippingDraftRef.current = snapshot
+    setFormData((current) => ({
+      ...current,
+      shipping_address: snapshot,
+    }))
+    setSelectedAddressId(savedAddress.id)
+    setError(null)
+  }
+
+  const useManualAddress = () => {
+    setSelectedAddressId(null)
+    setError(null)
+  }
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setSavedAddresses([])
+      setSelectedAddressId(null)
+      setSavedAddressError(null)
+      setIsLoadingSavedAddresses(true)
+    }
+
+    onOpenChange(nextOpen)
   }
 
   const handlePayment = async () => {
@@ -408,7 +510,7 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[92vh] overflow-hidden p-0 shadow-2xl sm:max-w-xl">
         <DialogHeader className="px-6 pt-6">
           <DialogTitle className="text-xl font-semibold text-zinc-900">
@@ -453,42 +555,163 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
 
           {step === 2 && (
             <div className="space-y-4">
-              <IconInput
-                id="address"
-                label="Address line"
-                icon={MapPin}
-                value={formData.shipping_address.address}
-                onChange={(value) => updateAddressField("address", value)}
-              />
-              <div className="space-y-2">
-                <Label htmlFor="city">City</Label>
-                <Input
-                  id="city"
-                  value={formData.shipping_address.city}
-                  onChange={(event) =>
-                    updateAddressField("city", event.target.value)
-                  }
-                  className="rounded-lg"
-                />
+              <div aria-live="polite" className="space-y-3">
+                {isLoadingSavedAddresses && (
+                  <p className="flex items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+                    <Loader2
+                      className="size-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                    Loading saved addresses...
+                  </p>
+                )}
+
+                {savedAddressError && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-800">
+                    {savedAddressError}
+                  </p>
+                )}
+
+                {savedAddresses.length > 0 && (
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-semibold text-zinc-900">
+                      Saved addresses
+                    </legend>
+                    {savedAddresses.map((savedAddress) => {
+                      const isSelected =
+                        selectedAddressId === savedAddress.id
+
+                      return (
+                        <label key={savedAddress.id} className="block">
+                          <input
+                            type="radio"
+                            name="checkout-address-mode"
+                            value={savedAddress.id}
+                            checked={isSelected}
+                            onChange={() =>
+                              selectSavedAddress(savedAddress)
+                            }
+                            className="peer sr-only"
+                          />
+                          <span
+                            className={cn(
+                              "block cursor-pointer rounded-xl border bg-white p-3 text-sm transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-amber-500 peer-focus-visible:ring-offset-2",
+                              isSelected
+                                ? "border-amber-400 bg-amber-50/60"
+                                : "border-zinc-200 hover:border-zinc-400"
+                            )}
+                          >
+                            <span className="flex items-start justify-between gap-3">
+                              <span className="min-w-0">
+                                <span className="flex flex-wrap items-center gap-2 font-semibold text-zinc-900">
+                                  <span className="break-words">
+                                    {savedAddress.label}
+                                  </span>
+                                  {savedAddress.is_default && (
+                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                                      Default
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="mt-1 block break-words leading-5 text-zinc-600">
+                                  {savedAddress.address}
+                                </span>
+                                <span className="block break-words leading-5 text-zinc-600">
+                                  {savedAddress.city}, {savedAddress.state}
+                                </span>
+                              </span>
+                              {isSelected && (
+                                <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-amber-800">
+                                  <Check
+                                    className="size-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Selected
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                        </label>
+                      )
+                    })}
+
+                    <label className="block">
+                      <input
+                        type="radio"
+                        name="checkout-address-mode"
+                        value="manual"
+                        checked={selectedAddressId === null}
+                        onChange={useManualAddress}
+                        className="peer sr-only"
+                      />
+                      <span
+                        className={cn(
+                          "block cursor-pointer rounded-xl border bg-white p-3 text-sm transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-amber-500 peer-focus-visible:ring-offset-2",
+                          selectedAddressId === null
+                            ? "border-amber-400 bg-amber-50/60"
+                            : "border-zinc-200 hover:border-zinc-400"
+                        )}
+                      >
+                        <span className="font-semibold text-zinc-900">
+                          Enter address manually
+                        </span>
+                        <span className="mt-1 block text-zinc-600">
+                          Use or adjust a one-off delivery address.
+                        </span>
+                        {selectedAddressId === null && (
+                          <span className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-800">
+                            <Check className="size-3.5" aria-hidden="true" />
+                            Selected
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </fieldset>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="state">State</Label>
-                <select
-                  id="state"
-                  value={formData.shipping_address.state}
-                  onChange={(event) =>
-                    updateAddressField("state", event.target.value)
-                  }
-                  className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm outline-none transition-colors focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                >
-                  <option value="">Select state</option>
-                  {states.map((state) => (
-                    <option key={state} value={state}>
-                      {state}
-                    </option>
-                  ))}
-                </select>
-              </div>
+
+              {selectedAddressId === null && (
+                <div className="space-y-4">
+                  <IconInput
+                    id="address"
+                    label="Address line"
+                    icon={MapPin}
+                    value={formData.shipping_address.address}
+                    onChange={(value) =>
+                      updateAddressField("address", value)
+                    }
+                  />
+                  <div className="space-y-2">
+                    <Label htmlFor="city">City</Label>
+                    <Input
+                      id="city"
+                      value={formData.shipping_address.city}
+                      onChange={(event) =>
+                        updateAddressField("city", event.target.value)
+                      }
+                      className="rounded-lg"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="state">State</Label>
+                    <select
+                      id="state"
+                      value={formData.shipping_address.state}
+                      onChange={(event) =>
+                        updateAddressField("state", event.target.value)
+                      }
+                      className="h-10 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm outline-none transition-colors focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                    >
+                      <option value="">Select state</option>
+                      {NIGERIAN_STATES.map((state) => (
+                        <option key={state} value={state}>
+                          {state}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Button
                   type="button"
