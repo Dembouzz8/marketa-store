@@ -339,27 +339,106 @@ a properly designed temporary page exists.
 
 ## 11. Customer accounts
 
-Customer authentication is not part of the first storefront phase.
+Customers may browse the homepage, catalogue, product details and public
+vendor storefronts, and may manage a cart without signing in. Purchase is an
+authenticated customer experience: signed-out customers who proceed to
+checkout are sent to `/account/login?checkout=1`, where they may sign in or
+create an account.
 
-Future customer routes:
+Customer authentication uses Supabase Auth with email and password. The
+implemented customer routes are:
 
+- `/account`
 - `/account/login`
 - `/account/register`
-- `/account/orders`
 - `/account/profile`
+- `/account/orders`
 - `/account/addresses`
+- `/account/auth/callback`
 
-Customers should be allowed to:
+Customer profile data is stored in `public.customer_profiles`, separately from
+Auth metadata. A complete checkout profile requires `full_name` and `phone`.
+Checkout identity comes from trusted sources:
 
-- Browse without logging in
-- Search without logging in
-- Add products to the cart without logging in
-- Check out as guests
-- Optionally sign in or create an account
+- Email comes from the verified Supabase Auth user.
+- Full name and phone come from `customer_profiles`.
+- Browser checkout fields are not trusted as customer identity.
 
-Do not reuse `/vendor/login` for customers.
+### Authenticated checkout and order ownership
 
-Do not require account creation before checkout.
+The browser sends a Bearer Auth access token. Its checkout request contains,
+logically:
+
+```json
+{
+  "checkout_attempt_id": "...",
+  "items": [
+    {
+      "product_id": "...",
+      "quantity": 1
+    }
+  ],
+  "shipping_address": {
+    "address": "...",
+    "city": "...",
+    "state": "..."
+  }
+}
+```
+
+It does not supply customer ID, name, email or phone, product prices, or a
+saved-address ID. `handle-checkout` independently verifies the authenticated
+user, obtains customer identity from Auth and `customer_profiles`, and obtains
+authoritative product and price data server-side.
+
+New authenticated purchases store the verified Supabase Auth user UUID in
+`orders.customer_id`. Customer order access is ownership-based, and customer
+history queries explicitly filter `customer_id` to the authenticated user's
+ID. Historical guest orders whose `customer_id` is `NULL` remain unowned; they
+are not matched or claimed by email.
+
+### Customer order history
+
+`/account/orders` shows only the authenticated customer's orders, newest
+first, with pagination. Each summary includes the order ID, placed date,
+status, total, item quantity, and a safe product preview with a
+`Product unavailable` fallback.
+
+The customer order-detail route `/account/orders/[id]` is deferred and must
+not be treated as implemented.
+
+### Saved addresses and shipping snapshots
+
+At `/account/addresses`, customers can create, edit and delete saved addresses
+and set a default. Each customer may have zero or one default address. A saved
+address contains a label, address, city and Nigerian state; it does not contain
+customer email, name, phone or order-ownership data.
+
+During checkout, a customer may select a saved address or enter an address
+manually. Selection copies the address, city and state into the existing
+checkout shipping snapshot. The saved-address row ID is not sent to
+`handle-checkout`, and checkout does not offer a "Save this address" mutation;
+saved-address CRUD remains under `/account/addresses`.
+
+`customer_addresses` is mutable convenience data, while
+`orders.shipping_address` is the historical order snapshot. Editing or
+deleting a saved address does not change previous orders, and orders have no
+foreign key to `customer_addresses`.
+
+### Payment confirmation and cart finalization
+
+The cart is not cleared when payment initialization begins or when the shopper
+is redirected to Paystack. It remains intact for abandoned payments and for
+pending, failed or unknown confirmation states.
+
+After trusted payment confirmation, the storefront requires the matching
+pending checkout and clears the cart only when its fingerprint still matches
+the purchased cart. Changed cart contents and unrelated or newly added items
+are preserved.
+
+Customer account UX remains separate from vendor login and dashboard UX. A
+customer session alone does not grant vendor dashboard access; vendor access
+continues through `/vendor/login` and the vendor authorization model.
 
 ---
 
@@ -410,12 +489,26 @@ The following remain outside the completed Phase 3 MVP scope:
 
 ### Phase 4 — Customer experience
 
-**Status: Not implemented.**
+**Status: Complete for MVP.**
 
-- Customer authentication
-- Customer order history
-- Saved addresses
-- Customer profiles
+- Supabase customer authentication and customer account routes
+- Customer profiles with required checkout name and phone
+- Authenticated purchase requirement
+- Server-enforced order ownership
+- Paginated customer order history
+- Saved-address management
+- Saved-address selection during checkout
+- Confirmed-payment cart finalization
+
+Deferred Phase 4 enhancements:
+
+- Customer order detail at `/account/orders/[id]`
+- Optional future account and customer UX enhancements
+
+Separate existing backlogs remain outside Phase 4 and are not Phase 4
+blockers: payment/outbox hardening, refunds, payout scheduling, stock decrement
+redesign, vendor portal/security cleanup, and seller-application
+review/provisioning tooling.
 
 ---
 

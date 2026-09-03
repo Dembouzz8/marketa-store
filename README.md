@@ -54,12 +54,54 @@ authority responsible for confirming Paystack events. n8n may handle
 downstream operational automation, but it does not initialize or confirm
 customer payment.
 
-Deploy the guest-accessible `payment-status` Edge Function with JWT
-verification disabled. It performs a read-only status lookup using an exact
-order ID and payment reference and never returns private order data. Production
-deployments should add distributed rate limiting at the platform or gateway
-layer; this repository does not include suitable shared rate-limit
-infrastructure, and an in-memory Edge Function limiter would not be reliable.
+Deploy the public `payment-status` Edge Function with JWT verification
+disabled. It is a payment verification/status surface that performs a
+read-only lookup using an exact order ID and payment reference and never
+returns private order data. Purchase initialization remains authenticated and
+is handled separately by `handle-checkout`. Production deployments should add
+distributed rate limiting at the platform or gateway layer; this repository
+does not include suitable shared rate-limit infrastructure, and an in-memory
+Edge Function limiter would not be reliable.
+
+## Customer Experience and Checkout
+
+The homepage, catalogue, product details, public vendor storefronts and cart
+are available without signing in. Purchase requires a Supabase Auth customer
+account: signed-out checkout redirects to `/account/login?checkout=1`, which
+supports both sign-in and account creation.
+
+Customer account routes include `/account`, `/account/login`,
+`/account/register`, `/account/profile`, `/account/orders`,
+`/account/addresses` and `/account/auth/callback`. Registration uses email and
+password. Checkout identity is not accepted from browser form fields: email
+comes from the verified Auth user, while required full name and phone values
+come from the separate `public.customer_profiles` table.
+
+Authenticated checkout sends a Bearer access token plus a checkout attempt,
+product IDs and quantities, and a shipping-address snapshot.
+`handle-checkout` verifies the user and stores the verified Auth UUID in
+`orders.customer_id`; customer order history at `/account/orders` is filtered
+to that owner. Historical orders with `customer_id = NULL` remain unowned and
+are not claimed by email. The MVP order-history page is paginated and newest
+first; customer order detail at `/account/orders/[id]` is deferred.
+
+Customers manage saved addresses at `/account/addresses`, including create,
+edit, delete and default selection, with at most one default address. Checkout
+can copy a saved address into its shipping snapshot or accept a manual address;
+it does not send the saved-address ID or save addresses during checkout.
+`customer_addresses` remains mutable convenience data, whereas
+`orders.shipping_address` is an immutable historical snapshot with no foreign
+key to a saved address. Editing or deleting a saved address therefore does not
+change an existing order.
+
+The persisted cart is retained through payment initialization, redirect,
+abandonment, and pending, failed or unknown verification. After trusted
+payment confirmation, the matching pending checkout clears the cart only when
+the current cart fingerprint still matches the purchased cart, preserving
+changed carts and unrelated or newly added items.
+
+Customer account UX is separate from the vendor login and dashboard. A
+customer session by itself does not grant vendor dashboard access.
 
 ## Public Vendors and Seller Applications
 
