@@ -4,7 +4,6 @@ import { Minus, Plus } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/use-toast"
 import { useCartStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import type { Product } from "@/types"
@@ -20,10 +19,6 @@ export function ProductActions({ product }: { product: Product }) {
     for (let item = 0; item < quantity; item += 1) {
       addItem(product)
     }
-    toast({
-      title: "Added to cart! 🛒",
-      description: `${quantity} ${quantity === 1 ? "item" : "items"} added.`,
-    })
   }
 
   return (

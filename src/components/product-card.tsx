@@ -5,7 +5,6 @@ import Link from "next/link"
 
 import { ProductImage } from "@/components/product-image"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/use-toast"
 import { useCartStore } from "@/lib/store"
 import { cn, formatNaira, getProductImage } from "@/lib/utils"
 import type { Product } from "@/types"
@@ -51,7 +50,6 @@ export function ProductCard({ product, index, vendorName }: ProductCardProps) {
     }
 
     addItem(product)
-    toast({ title: "Added to cart! 🛒" })
   }
 
   return (
