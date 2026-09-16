@@ -44,6 +44,15 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const path = request.nextUrl.pathname
+  const isAdminRoute = path === "/admin" || path.startsWith("/admin/")
+  if (isAdminRoute) {
+    response.headers.set("Cache-Control", "private, no-store")
+    if (path !== "/admin/login" && !user) {
+      const redirect = redirectWithCookies(request, response, "/admin/login")
+      redirect.headers.set("Cache-Control", "private, no-store")
+      return redirect
+    }
+  }
   const isVendorRoute = path.startsWith("/vendor")
   const isVendorLoginPage = path === "/vendor/login"
   const isAccountRoute = path === "/account" || path.startsWith("/account/")
@@ -81,5 +90,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/vendor/:path*", "/account/:path*"],
+  matcher: ["/vendor/:path*", "/account/:path*", "/admin/:path*"],
 }
