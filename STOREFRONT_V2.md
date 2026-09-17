@@ -494,10 +494,14 @@ The following remain outside the completed Phase 3 MVP scope:
 - Automatic Auth user or vendor provisioning is not implemented.
 - Payment and paid-order outbox redesign remains separately deferred and frozen.
 
-Batch 3 has been audited but not implemented. It will address Auth identity
-resolution, new-user invitation, existing-customer identity reuse, and the
-transition toward `awaiting_enrollment`. Vendor onboarding and finalization
-are not implemented.
+Batch 3 is in progress. Vendor Provisioning Batch 3A is complete: its applied,
+service-role-only `resolve_vendor_application_auth_identity(uuid)` function
+resolves Auth identity state for an application without changing application,
+vendor, or Auth data. It does not claim provisioning, invite or create Auth
+users, record application Auth identity, create vendors, finalize provisioning,
+activate vendors, or verify vendors. Batch 3B is next: vendor Auth callback,
+onboarding landing, and proxy routing, without real invitations. Provisioning
+initiation, invitation, and finalization remain unimplemented.
 
 ### Phase 4 — Customer experience
 

@@ -7,14 +7,15 @@ applied migrations take precedence over this handoff if they differ.
 ## Repository state
 
 - Branch: `main`.
-- HEAD: `dd03df5d38af7db0a39e0d5972205d5da1ec2109` (`feat: add vendor application admin review`).
+- HEAD: `6cb1ae694d1e0d3a95d089f2dfa13ee1e6b53e70` (`docs: add codex handoff and sync provisioning status`).
 - Local `origin/main` tracking HEAD: the same commit.
-- Working tree: clean before this handoff task; afterward intentionally dirty
-  only with the unstaged `AGENTS.md` change and new `docs/CODEX_HANDOFF.md`.
-- Linked migrations: all 13 local and remote versions match through
-  `20260916120000_vendor_provisioning_transition_functions.sql`. The Batch 1A
-  and location-reconciliation migrations are also applied. No Batch 3
-  migration exists.
+- Working tree at this handoff: `README.md`, `STOREFRONT_V2.md`, and this
+  handoff are modified; the Batch 3A migration is present but untracked. No
+  application source or migration file was edited by this documentation update.
+- Linked migrations: all 14 local and remote versions match through
+  `20260917120000_add_vendor_application_auth_identity_resolver.sql`. The
+  Batch 3A migration is applied to the linked project; its local source is
+  still untracked.
 
 ## Overall Marketa status
 
@@ -46,11 +47,16 @@ storefront or vendor enhancement complete.
   vendor-application list/detail, and start-review/approve/reject actions.
   Reviewer identity comes from the authenticated admin session. There is no
   provisioning control, Auth Admin call, vendor activation, or verification.
+- **Vendor Provisioning Batch 3A — COMPLETE:** application-scoped,
+  service-role-only, read-only Auth identity resolution through
+  `public.resolve_vendor_application_auth_identity(uuid)`. Its migration was
+  source-reviewed, applied, and validated on the linked project.
 
 ## Batch 3 status and boundary
 
 - **Batch 3 read-only audit — COMPLETE.**
-- **Batch 3 implementation — NOT STARTED.**
+- **Batch 3 implementation — IN PROGRESS:** Batch 3A is complete; Batch 3B
+  has not started.
 - Goal: Auth identity resolution, invitation, and provisioning initiation.
   Admin approval leaves an application `approved/not_started`; an authorized
   admin must explicitly start provisioning.
@@ -60,6 +66,15 @@ storefront or vendor enhancement complete.
 - Batch 3 must **not** call `finalize_vendor_application_provisioning()`.
   Finalization belongs to a later explicit, authenticated vendor-enrollment
   action by the recorded account owner.
+
+Batch 3A accepts only an application UUID and derives the normalized email
+inside the resolver. Linked validation confirmed owner `postgres`,
+`SECURITY DEFINER`, an empty `search_path`, no EXECUTE for `anon` or
+`authenticated`, and EXECUTE for `service_role`. An approved/not_started
+application resolved read-only as expected, with no application, vendor, or
+Auth data mutation. Batch 3A does not claim provisioning, send invitations,
+create Auth users, record application Auth identity, create vendors, finalize
+provisioning, activate vendors, or verify vendors.
 
 Approval is not provisioning; provisioning is not activation; activation is
 not verification. An existing customer Auth identity must be reused, never
@@ -78,10 +93,11 @@ must call `auth.getUser(jwt)`, derive the caller UUID, check private
 Admin operations. Do not accept browser-supplied admin/reviewer UUID, email,
 Auth UUID, vendor UUID, fee, activation, verification, or redirect URL.
 
-The installed Supabase SDK has no suitable get-user-by-email API. Add a
-narrow, service-role-only `SECURITY DEFINER` Auth resolver scoped to an
-application ID; it derives the application email internally and returns only
-safe identity states, never a general arbitrary-email enumeration surface.
+The installed Supabase SDK has no suitable get-user-by-email API. Batch 3A
+added the narrow, service-role-only `SECURITY DEFINER` Auth resolver scoped
+to an application ID. It derives the application email internally and returns
+only controlled identity states, never a general arbitrary-email enumeration
+surface. Edge orchestration and invitation remain unimplemented.
 
 - Existing confirmed customer: reuse the Auth UUID, record it with
   `p_invited = false`, enter `awaiting_enrollment`, and send a separate
@@ -100,6 +116,10 @@ second invitation automatically. Auth Admin and database writes are not one
 transaction.
 
 ### Vendor invitation callback — chosen direction
+
+**Batch 3B is the next implementation sub-batch:** add the vendor Auth
+callback, onboarding landing, and narrow proxy routing so the pre-vendor
+paths are reachable. Batch 3B must not send real invitations.
 
 Because this app uses Next.js SSR/cookie Auth, customize the invite template
 to send a token hash to the fixed first-party template target
@@ -126,7 +146,8 @@ template, and delivery provider are configured and tested.
 
 ## Documentation alignment
 
-`README.md`, `STOREFRONT_V2.md`, and `docs/CODEX_HANDOFF.md` now agree that
-minimal admin application review is implemented. Batch 3 Auth identity
-resolution and invitation, automatic vendor provisioning, and vendor
-onboarding/finalization remain unimplemented.
+`README.md`, `STOREFRONT_V2.md`, and `docs/CODEX_HANDOFF.md` agree that
+minimal admin application review and Batch 3A identity resolution are
+implemented. Batch 3 overall remains in progress. Vendor callback,
+onboarding, invitation, provisioning initiation, and finalization remain
+unimplemented.
