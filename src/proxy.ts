@@ -11,6 +11,10 @@ function redirectWithCookies(
   response.cookies.getAll().forEach((cookie) => {
     redirectResponse.cookies.set(cookie)
   })
+  for (const header of ["Cache-Control", "Expires", "Pragma"]) {
+    const value = response.headers.get(header)
+    if (value) redirectResponse.headers.set(header, value)
+  }
 
   return redirectResponse
 }
@@ -26,13 +30,16 @@ export async function proxy(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet, headers) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
           response = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
+          )
+          Object.entries(headers).forEach(([name, value]) =>
+            response.headers.set(name, value)
           )
         },
       },
@@ -55,6 +62,8 @@ export async function proxy(request: NextRequest) {
   }
   const isVendorRoute = path.startsWith("/vendor")
   const isVendorLoginPage = path === "/vendor/login"
+  const isVendorCallback = path === "/vendor/auth/callback"
+  const isVendorOnboarding = path === "/vendor/onboarding"
   const isAccountRoute = path === "/account" || path.startsWith("/account/")
   const isAccountAuthPage =
     path === "/account/login" || path === "/account/register"
@@ -62,8 +71,14 @@ export async function proxy(request: NextRequest) {
   const isProtectedAccountRoute =
     isAccountRoute && !isAccountAuthPage && !isAccountCallback
 
-  if (isVendorRoute && !isVendorLoginPage && !user) {
-    return redirectWithCookies(request, response, "/vendor/login")
+  if (isVendorRoute && !isVendorLoginPage && !isVendorCallback && !user) {
+    const redirect = redirectWithCookies(
+      request,
+      response,
+      isVendorOnboarding ? "/account/login?vendor_onboarding=1" : "/vendor/login"
+    )
+    if (isVendorOnboarding) redirect.headers.set("Cache-Control", "private, no-store")
+    return redirect
   }
 
   if (isVendorLoginPage && user) {
@@ -83,7 +98,14 @@ export async function proxy(request: NextRequest) {
   }
 
   if (isAccountAuthPage && user) {
+    if (path === "/account/login" && request.nextUrl.searchParams.get("vendor_onboarding") === "1") {
+      return redirectWithCookies(request, response, "/vendor/onboarding")
+    }
     return redirectWithCookies(request, response, "/account")
+  }
+
+  if (isVendorCallback || isVendorOnboarding) {
+    response.headers.set("Cache-Control", "private, no-store")
   }
 
   return response

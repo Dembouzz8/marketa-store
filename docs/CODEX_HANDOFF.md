@@ -7,15 +7,15 @@ applied migrations take precedence over this handoff if they differ.
 ## Repository state
 
 - Branch: `main`.
-- HEAD: `6cb1ae694d1e0d3a95d089f2dfa13ee1e6b53e70` (`docs: add codex handoff and sync provisioning status`).
+- HEAD: `212062c777b2a1a218de60e21e45fbebfac59af7` (`feat: add vendor application auth identity resolver`).
 - Local `origin/main` tracking HEAD: the same commit.
-- Working tree at this handoff: `README.md`, `STOREFRONT_V2.md`, and this
-  handoff are modified; the Batch 3A migration is present but untracked. No
-  application source or migration file was edited by this documentation update.
+- Working tree at this handoff: `README.md`, `STOREFRONT_V2.md`,
+  `docs/CODEX_HANDOFF.md`, `src/proxy.ts`, and the customer login page are
+  modified. The vendor callback and onboarding page are untracked new files.
+  No migration was changed. Batch 3B has not been committed or deployed.
 - Linked migrations: all 14 local and remote versions match through
   `20260917120000_add_vendor_application_auth_identity_resolver.sql`. The
-  Batch 3A migration is applied to the linked project; its local source is
-  still untracked.
+  Batch 3A migration is applied to the linked project and tracked locally.
 
 ## Overall Marketa status
 
@@ -51,12 +51,16 @@ storefront or vendor enhancement complete.
   service-role-only, read-only Auth identity resolution through
   `public.resolve_vendor_application_auth_identity(uuid)`. Its migration was
   source-reviewed, applied, and validated on the linked project.
+- **Vendor Provisioning Batch 3B — IMPLEMENTED LOCALLY, PENDING SOURCE REVIEW:**
+  a strict invite-token callback, pre-vendor onboarding landing, fixed
+  customer-login return, and narrow proxy routing. No real invitation was sent.
 
 ## Batch 3 status and boundary
 
 - **Batch 3 read-only audit — COMPLETE.**
-- **Batch 3 implementation — IN PROGRESS:** Batch 3A is complete; Batch 3B
-  has not started.
+- **Batch 3 implementation — IN PROGRESS:** Batch 3A is complete. Batch 3B is
+  implemented locally and validated with isolated checks, TypeScript, ESLint,
+  and a production build; it awaits source review and has not been deployed.
 - Goal: Auth identity resolution, invitation, and provisioning initiation.
   Admin approval leaves an application `approved/not_started`; an authorized
   admin must explicitly start provisioning.
@@ -97,7 +101,8 @@ The installed Supabase SDK has no suitable get-user-by-email API. Batch 3A
 added the narrow, service-role-only `SECURITY DEFINER` Auth resolver scoped
 to an application ID. It derives the application email internally and returns
 only controlled identity states, never a general arbitrary-email enumeration
-surface. Edge orchestration and invitation remain unimplemented.
+surface. Edge orchestration and invitation remain unimplemented. Batch 3B
+does not call this resolver or any provisioning RPC.
 
 - Existing confirmed customer: reuse the Auth UUID, record it with
   `p_invited = false`, enter `awaiting_enrollment`, and send a separate
@@ -117,21 +122,28 @@ transaction.
 
 ### Vendor invitation callback — chosen direction
 
-**Batch 3B is the next implementation sub-batch:** add the vendor Auth
-callback, onboarding landing, and narrow proxy routing so the pre-vendor
-paths are reachable. Batch 3B must not send real invitations.
+**Batch 3B is implemented locally, pending source review.** Its vendor Auth
+callback, onboarding landing, fixed customer-login return, and narrow proxy
+routing let pre-vendor paths be reached without granting vendor dashboard
+access. Batch 3B sends no real invitations.
 
-Because this app uses Next.js SSR/cookie Auth, customize the invite template
-to send a token hash to the fixed first-party template target
+Because this app uses Next.js SSR/cookie Auth, a later invitation rollout must
+customize the invite template to send a token hash to the fixed first-party
+template target
 `/vendor/auth/callback?token_hash={{ .TokenHash }}&type=invite` (template
-syntax only; never record an issued invite link). The route should verify it
-with server-side Supabase
-`verifyOtp`, establish the cookie session, then redirect to
-`/vendor/onboarding`. This is a design requirement, not an existing route or
-template. Do not rely on a client page consuming the default fragment
-session. Do not reuse the customer `/account/auth/callback`, which handles a
-different flow. Update the proxy narrowly so the vendor callback and
-pre-vendor onboarding path are reachable before a vendor row exists.
+syntax only; never record an issued invite link). The implemented route accepts
+only one `token_hash` and `type=invite`, rejects all other query parameters,
+verifies with server-side `verifyOtp`, writes the returned session cookies to
+its redirect response, confirms the same user with `getUser`, then redirects to
+`/vendor/onboarding`. Every failure goes to a fixed customer-login URL with a
+controlled message. The dynamic onboarding page checks the authenticated user
+and vendor membership with a user-scoped client; it redirects existing vendors
+to the dashboard, sends signed-out users to customer login, and gives
+non-vendors an informational landing. The proxy exempts only the exact callback
+and onboarding paths. The customer login recognizes only
+`vendor_onboarding=1` as a fixed return to `/vendor/onboarding`. These local
+routes are not yet deployed. The Auth template and remote settings have not
+been changed.
 
 ## Live-invitation blockers and next rollout gate
 
@@ -141,13 +153,14 @@ provider, and a generic invite template rather than a Marketa vendor-specific
 one. No existing Resend transactional-email helper was found in this
 repository. Recheck these settings before rollout; they can change outside
 Git. Do not enable the admin provisioning action or send real invitations
-until the callback/onboarding route, production Auth URLs/allow-list,
-template, and delivery provider are configured and tested.
+until Batch 3B has passed source review and been deployed, and production Auth
+URLs/allow-list, template, and delivery provider are configured and tested.
 
 ## Documentation alignment
 
 `README.md`, `STOREFRONT_V2.md`, and `docs/CODEX_HANDOFF.md` agree that
 minimal admin application review and Batch 3A identity resolution are
-implemented. Batch 3 overall remains in progress. Vendor callback,
-onboarding, invitation, provisioning initiation, and finalization remain
+implemented. Batch 3B callback, onboarding, login return, and proxy routing
+are implemented locally pending source review. Batch 3 overall remains in
+progress. Invitation, provisioning initiation, and finalization remain
 unimplemented.

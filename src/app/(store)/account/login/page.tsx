@@ -26,6 +26,8 @@ export default function CustomerLoginPage() {
 function CustomerLoginForm() {
   const searchParams = useSearchParams()
   const isCheckoutFlow = searchParams.get("checkout") === "1"
+  const isVendorOnboarding = searchParams.get("vendor_onboarding") === "1"
+  const hasInviteError = isVendorOnboarding && searchParams.get("invite_error") === "1"
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -70,7 +72,7 @@ function CustomerLoginForm() {
         return
       }
 
-      window.location.assign("/")
+      window.location.assign(isVendorOnboarding ? "/vendor/onboarding" : "/")
     } catch {
       setErrors({
         form: "We couldn't sign you in right now. Please try again.",
@@ -91,11 +93,19 @@ function CustomerLoginForm() {
             Customer Login
           </h1>
           <p className="mt-2 text-sm leading-6 text-zinc-600">
-            {isCheckoutFlow
+            {isVendorOnboarding
+              ? "Sign in with your Marketa account to continue to seller enrollment."
+              : isCheckoutFlow
               ? "Sign in or create an account to continue to checkout."
               : "Sign in to your Marketa customer account."}
           </p>
         </div>
+
+        {hasInviteError && (
+          <p role="alert" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            The seller invitation link is invalid or has expired. Sign in to continue if you already have a Marketa account, or contact Marketa support for help.
+          </p>
+        )}
 
         <form noValidate onSubmit={handleSubmit} className="mt-8 space-y-5">
           {errors.form && (
@@ -203,15 +213,17 @@ function CustomerLoginForm() {
           </Button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-zinc-600">
-          Don&apos;t have an account?{" "}
-          <Link
-            href="/account/register"
-            className="font-semibold text-amber-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
-          >
-            Create one
-          </Link>
-        </p>
+        {!isVendorOnboarding && (
+          <p className="mt-6 text-center text-sm text-zinc-600">
+            Don&apos;t have an account?{" "}
+            <Link
+              href="/account/register"
+              className="font-semibold text-amber-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+            >
+              Create one
+            </Link>
+          </p>
+        )}
       </div>
     </main>
   )

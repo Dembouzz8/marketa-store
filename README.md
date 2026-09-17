@@ -125,11 +125,12 @@ customer session by itself does not grant vendor dashboard access.
   verify one. Vendor Provisioning Batch 3A is complete: the applied,
   service-role-only `resolve_vendor_application_auth_identity(uuid)` function
   reads an application's Auth identity state without changing application,
-  vendor, or Auth data. Batch 3 overall remains in progress. The next
-  sub-batch is the vendor Auth callback, onboarding landing, and proxy routing;
-  it will not send real invitations. Provisioning initiation, invitation,
-  identity recording, vendor creation, activation, verification, and
-  finalization are not implemented.
+  vendor, or Auth data. Batch 3B is implemented locally pending source review:
+  it adds the strict vendor invite callback, informational onboarding landing,
+  fixed customer-login return, and narrow proxy routing. It has not been
+  deployed and sends no real invitations. Batch 3 overall remains in progress.
+  Provisioning initiation, invitation, identity recording, vendor creation,
+  activation, verification, and finalization are not implemented.
 
 Vendor logo and storage support remains a deferred enhancement. Payment and
 paid-order outbox redesign remains separately deferred and frozen.

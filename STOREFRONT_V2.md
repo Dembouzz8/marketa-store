@@ -499,9 +499,11 @@ service-role-only `resolve_vendor_application_auth_identity(uuid)` function
 resolves Auth identity state for an application without changing application,
 vendor, or Auth data. It does not claim provisioning, invite or create Auth
 users, record application Auth identity, create vendors, finalize provisioning,
-activate vendors, or verify vendors. Batch 3B is next: vendor Auth callback,
-onboarding landing, and proxy routing, without real invitations. Provisioning
-initiation, invitation, and finalization remain unimplemented.
+activate vendors, or verify vendors. Batch 3B is implemented locally pending
+source review: strict vendor Auth callback, informational onboarding landing,
+fixed customer-login return, and narrow proxy routing. It has not been deployed
+and sends no real invitations. Provisioning initiation, invitation, and
+finalization remain unimplemented.
 
 ### Phase 4 — Customer experience
 
