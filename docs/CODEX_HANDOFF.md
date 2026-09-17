@@ -7,13 +7,13 @@ applied migrations take precedence over this handoff if they differ.
 ## Repository state
 
 - Branch: `main`.
-- HEAD: `f153dc6453fa43bb81a931f61148e7f11960ce4a` (`feat: add vendor enrollment auth landing flow`).
+- HEAD: `230b1e1d9b10f23de40dbc890785e0c4bac2ae72` (`feat: harden vendor invite acceptance flow`).
 - Local `origin/main` tracking HEAD: the same commit.
 - Working tree at this handoff: `README.md`, `STOREFRONT_V2.md`,
-  `docs/CODEX_HANDOFF.md`, `src/app/vendor/auth/callback/route.ts`, and
-  `src/proxy.ts` are modified. The confirmation page and isolated Batch 3C1
-  test file are untracked. No migration was changed. Batch 3C1 is local and
-  has not been committed or deployed.
+  `docs/CODEX_HANDOFF.md`, and `src/components/vendor/sidebar.tsx` are
+  modified. `tests/vendor-logout.test.mjs` is untracked. No migration was
+  changed. The vendor logout hotfix is local, pending review, and has not been
+  committed or deployed.
 - Linked migrations: all 14 local and remote versions match through
   `20260917120000_add_vendor_application_auth_identity_resolver.sql`. The
   Batch 3A migration is applied to the linked project and tracked locally.
@@ -59,18 +59,17 @@ storefront or vendor enhancement complete.
   template, and email-delivery configuration were checked. The chosen
   production origin is `https://marketa-store.vercel.app`; real invitations
   remain disabled.
-- **Vendor Provisioning Batch 3C1 — IMPLEMENTED LOCALLY, PENDING SOURCE REVIEW:**
-  scanner-safe invite acceptance now requires an explicit POST after a
-  token-free confirmation page. It has not been deployed.
+- **Vendor Provisioning Batch 3C1 — COMMITTED ON MAIN:** scanner-safe invite
+  acceptance requires an explicit POST after a token-free confirmation page.
+  Its deployment status was not rechecked during the vendor logout hotfix.
 
 ## Batch 3 status and boundary
 
 - **Batch 3 read-only audit — COMPLETE.**
 - **Batch 3 implementation — IN PROGRESS:** Batch 3A is complete and its
   migration is applied. Batch 3B is committed and deployed. The Batch 3C
-  audit is complete. Batch 3C1 is implemented locally and validated with
-  isolated tests, TypeScript, ESLint, and a production build; it awaits source
-  review and has not been deployed.
+  audit is complete. Batch 3C1 is committed on main; its deployment status was
+  not rechecked during the vendor logout hotfix. Batch 3C2 has not begun.
 - Goal: Auth identity resolution, invitation, and provisioning initiation.
   Admin approval leaves an application `approved/not_started`; an authorized
   admin must explicitly start provisioning.
@@ -142,12 +141,13 @@ customize the invite template to send a token hash to the fixed first-party
 template target
 `/vendor/auth/callback?token_hash={{ .TokenHash }}&type=invite` (template
 syntax only; never record an issued invite link). Batch 3C1 changes the
-deployed callback behavior locally: GET accepts only one bounded `token_hash`
-and `type=invite`, rejects all other query parameters, stores a ten-minute
-HttpOnly invite cookie scoped to `/vendor/auth`, and redirects to the clean
-`/vendor/auth/confirm` page without verifying the token. An explicit,
-same-origin POST reads only that cookie, calls `verifyOtp` once through an
-anon SSR client, requires a session and user, confirms the same user with
+earlier callback behavior in the current repository: GET accepts only one
+bounded `token_hash` and `type=invite`, rejects all other query parameters,
+stores a ten-minute HttpOnly invite cookie scoped to `/vendor/auth`, and
+redirects to the clean `/vendor/auth/confirm` page without verifying the
+token. An explicit, same-origin POST reads only that cookie, calls `verifyOtp`
+once through an anon SSR client, requires a session and user, and confirms the
+same user with
 `getUser`, clears the transient cookie, and redirects to `/vendor/onboarding`.
 Failure uses a fixed customer-login destination and discards any response
 containing partially written Auth cookies. An already consumed invite may not
@@ -159,8 +159,21 @@ signed-out users to customer login, and gives non-vendors an informational
 landing. The proxy exempts only the exact callback and confirm paths from its
 signed-out vendor gate; vendor dashboard, order, and product protections remain.
 The customer login recognizes only `vendor_onboarding=1` as a fixed return to
-`/vendor/onboarding`. Batch 3C1 has not been deployed. The hosted Auth
-template and remote settings have not been changed.
+`/vendor/onboarding`. Batch 3C1 deployment status was not rechecked during
+the vendor logout hotfix. The hosted Auth template and remote settings have
+not been changed by this repository work.
+
+## Vendor logout hotfix
+
+**Implemented locally, pending review; not committed or deployed.** The vendor
+sidebar now uses the cookie-backed `createSupabaseBrowserClient()` and calls
+`auth.signOut({ scope: "local" })` for the current shared browser session.
+Desktop and mobile controls share one handler, pending state, and controlled
+error message. Successful sign-out navigates the browser to `/vendor/login`;
+failure leaves the vendor on the current page without displaying a raw Auth
+error. The focused isolated tests, TypeScript, ESLint, and production build
+passed. Manual browser QA remains outstanding. Vendor authorization and
+database migrations were not changed.
 
 ## Live-invitation blockers and next rollout gate
 
@@ -181,5 +194,6 @@ and tested. Provisioning orchestration remains unimplemented.
 `README.md`, `STOREFRONT_V2.md`, and `docs/CODEX_HANDOFF.md` agree that
 minimal admin application review and Batch 3A identity resolution are
 implemented, Batch 3B is deployed, Batch 3C audit is complete, and Batch 3C1
-is local pending source review. Batch 3 overall remains in progress.
+is committed on main with deployment status not rechecked here. Batch 3
+overall remains in progress. The vendor logout hotfix is local pending review.
 Invitation, provisioning initiation, and finalization remain unimplemented.

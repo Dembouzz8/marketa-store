@@ -128,12 +128,12 @@ customer session by itself does not grant vendor dashboard access.
   vendor, or Auth data. Batch 3B is complete and deployed: it added the vendor
   invite callback, informational onboarding landing, fixed customer-login
   return, and narrow proxy routing. The Batch 3C production Auth audit is
-  complete. Batch 3C1 is implemented locally pending source review: it makes
-  invite acceptance require an explicit POST from a token-free confirmation
-  page. It has not been deployed. No real invitations have been sent. Batch 3
-  overall remains in progress. Provisioning initiation, invitation, identity
-  recording, vendor creation, activation, verification, and finalization are
-  not implemented.
+  complete. Batch 3C1 is committed on main: it makes invite acceptance require
+  an explicit POST from a token-free confirmation page. Its deployment status
+  was not rechecked in the vendor logout hotfix. No real invitations have been
+  sent. Batch 3 overall remains in progress. Provisioning initiation,
+  invitation, identity recording, vendor creation, activation, verification,
+  and finalization are not implemented.
 
 Vendor logo and storage support remains a deferred enhancement. Payment and
 paid-order outbox redesign remains separately deferred and frozen.

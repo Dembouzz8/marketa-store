@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 import {
   LayoutDashboard,
   LogOut,
@@ -13,7 +13,7 @@ import {
   Wallet,
   X,
 } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -23,12 +23,19 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { supabase } from "@/lib/supabase"
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { cn } from "@/lib/utils"
 
 interface SidebarProps {
   vendorName: string
   vendorEmail: string
+}
+
+interface SidebarBodyProps extends SidebarProps {
+  onNavigate?: () => void
+  onLogout: () => Promise<void>
+  isSigningOut: boolean
+  logoutError: string | null
 }
 
 const navigation = [
@@ -43,17 +50,11 @@ function SidebarBody({
   vendorName,
   vendorEmail,
   onNavigate,
-}: SidebarProps & {
-  onNavigate?: () => void
-}) {
+  onLogout,
+  isSigningOut,
+  logoutError,
+}: SidebarBodyProps) {
   const pathname = usePathname()
-  const router = useRouter()
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push("/vendor/login")
-    router.refresh()
-  }
 
   return (
     <div className="flex h-full flex-col bg-zinc-900 text-zinc-400">
@@ -104,12 +105,18 @@ function SidebarBody({
         <Button
           type="button"
           variant="ghost"
-          onClick={handleLogout}
+          onClick={onLogout}
+          disabled={isSigningOut}
           className="w-full justify-start gap-3 rounded-lg px-4 py-3 text-zinc-400 hover:bg-zinc-800 hover:text-white"
         >
           <LogOut className="size-4" />
-          Logout
+          {isSigningOut ? "Signing out..." : "Logout"}
         </Button>
+        {logoutError && (
+          <p role="alert" className="mt-2 px-4 text-sm text-red-400">
+            {logoutError}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -117,11 +124,40 @@ function SidebarBody({
 
 export function Sidebar({ vendorName, vendorEmail }: SidebarProps) {
   const [open, setOpen] = useState(false)
+  const [isSigningOut, setIsSigningOut] = useState(false)
+  const [logoutError, setLogoutError] = useState<string | null>(null)
+  const signingOut = useRef(false)
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
+
+  const handleLogout = async () => {
+    if (signingOut.current) return
+    signingOut.current = true
+    setIsSigningOut(true)
+    setLogoutError(null)
+
+    try {
+      const { error } = await supabase.auth.signOut({ scope: "local" })
+      if (error) throw error
+    } catch {
+      setLogoutError("We couldn't sign you out. Please try again.")
+      signingOut.current = false
+      setIsSigningOut(false)
+      return
+    }
+
+    window.location.assign("/vendor/login")
+  }
 
   return (
     <>
       <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 border-r border-zinc-800 lg:block">
-        <SidebarBody vendorName={vendorName} vendorEmail={vendorEmail} />
+        <SidebarBody
+          vendorName={vendorName}
+          vendorEmail={vendorEmail}
+          onLogout={handleLogout}
+          isSigningOut={isSigningOut}
+          logoutError={logoutError}
+        />
       </aside>
 
       <div className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-zinc-200 bg-white px-4 lg:hidden">
@@ -162,6 +198,9 @@ export function Sidebar({ vendorName, vendorEmail }: SidebarProps) {
             vendorName={vendorName}
             vendorEmail={vendorEmail}
             onNavigate={() => setOpen(false)}
+            onLogout={handleLogout}
+            isSigningOut={isSigningOut}
+            logoutError={logoutError}
           />
         </SheetContent>
       </Sheet>
