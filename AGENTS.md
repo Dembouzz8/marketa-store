@@ -730,4 +730,23 @@ After all files are created:
 
 ---
 
+## SECTION 22 — DOCUMENTATION AND HANDOFF DISCIPLINE
+
+After every accepted implementation batch that materially changes project
+state, update `docs/CODEX_HANDOFF.md` from the current repository and applied
+migrations. Update `STOREFRONT_V2.md` and `README.md` only when their canonical
+content has materially changed. Do not duplicate project status across
+unnecessary new documents or mark unfinished work complete.
+
+Never put secrets, API keys, passwords, tokens, invite links, service-role
+credentials, or user/vendor personally identifiable information in project
+documentation. Read-only audits must not update documentation unless the user
+explicitly requests it.
+
+The repository and applied migrations are authoritative over conversation
+history or stale documentation. At task completion, report whether project
+documentation matches the repository and identify any known drift.
+
+---
+
 *End of AGENTS.md*

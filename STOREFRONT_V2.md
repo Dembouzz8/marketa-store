@@ -480,12 +480,24 @@ continues through `/vendor/login` and the vendor authorization model.
 - Durable, private vendor application foundation
 - Public application form and RPC submission at `/sell-with-us/apply`
 
+Minimal application review tooling was implemented separately after the Phase
+3 MVP scope. Authorized admins sign in at `/admin/login`, list applications at
+`/admin/vendor-applications`, view application details, and start review,
+approve, or reject. Admin membership is private and checked server-side;
+reviewer identity is derived from the authenticated admin session. Approval
+leaves `status = approved` and `provisioning_status = not_started`. It does not
+provision an Auth identity, create or activate a vendor, or verify one.
+
 The following remain outside the completed Phase 3 MVP scope:
 
 - Vendor logo and storage support is a deferred enhancement.
-- Application review and administrative tooling is not implemented.
 - Automatic Auth user or vendor provisioning is not implemented.
 - Payment and paid-order outbox redesign remains separately deferred and frozen.
+
+Batch 3 has been audited but not implemented. It will address Auth identity
+resolution, new-user invitation, existing-customer identity reuse, and the
+transition toward `awaiting_enrollment`. Vendor onboarding and finalization
+are not implemented.
 
 ### Phase 4 — Customer experience
 
@@ -508,7 +520,7 @@ Deferred Phase 4 enhancements:
 Separate existing backlogs remain outside Phase 4 and are not Phase 4
 blockers: payment/outbox hardening, refunds, payout scheduling, stock decrement
 redesign, vendor portal/security cleanup, and seller-application
-review/provisioning tooling.
+provisioning/onboarding tooling.
 
 ---
 

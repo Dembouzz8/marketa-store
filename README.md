@@ -116,8 +116,16 @@ customer session by itself does not grant vendor dashboard access.
   `submit_vendor_application` RPC. The underlying `vendor_applications` table
   is private to direct public, anonymous, and authenticated access.
 - An application submission does not create an Auth user, vendor row, or
-  dashboard access. Review tooling and automatic vendor provisioning are not
-  implemented.
+  dashboard access. Authorized admins can sign in at `/admin/login`, list
+  applications at `/admin/vendor-applications`, view application details, and
+  start review, approve, or reject. Admin membership is checked privately on
+  the server, and reviewer identity comes from the authenticated admin session.
+- Approval leaves `status = approved` and `provisioning_status = not_started`.
+  It does not provision an Auth identity, create or activate a vendor, or
+  verify one. Batch 3 (Auth identity resolution, new-user invitation,
+  existing-customer identity reuse, and transition toward
+  `awaiting_enrollment`) has been audited but is not implemented. Vendor
+  onboarding and finalization are not implemented.
 
 Vendor logo and storage support remains a deferred enhancement. Payment and
 paid-order outbox redesign remains separately deferred and frozen.
