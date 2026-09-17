@@ -63,6 +63,7 @@ export async function proxy(request: NextRequest) {
   const isVendorRoute = path.startsWith("/vendor")
   const isVendorLoginPage = path === "/vendor/login"
   const isVendorCallback = path === "/vendor/auth/callback"
+  const isVendorConfirm = path === "/vendor/auth/confirm"
   const isVendorOnboarding = path === "/vendor/onboarding"
   const isAccountRoute = path === "/account" || path.startsWith("/account/")
   const isAccountAuthPage =
@@ -71,7 +72,7 @@ export async function proxy(request: NextRequest) {
   const isProtectedAccountRoute =
     isAccountRoute && !isAccountAuthPage && !isAccountCallback
 
-  if (isVendorRoute && !isVendorLoginPage && !isVendorCallback && !user) {
+  if (isVendorRoute && !isVendorLoginPage && !isVendorCallback && !isVendorConfirm && !user) {
     const redirect = redirectWithCookies(
       request,
       response,
@@ -104,8 +105,11 @@ export async function proxy(request: NextRequest) {
     return redirectWithCookies(request, response, "/account")
   }
 
-  if (isVendorCallback || isVendorOnboarding) {
+  if (isVendorCallback || isVendorConfirm || isVendorOnboarding) {
     response.headers.set("Cache-Control", "private, no-store")
+  }
+  if (isVendorCallback || isVendorConfirm) {
+    response.headers.set("Referrer-Policy", "no-referrer")
   }
 
   return response

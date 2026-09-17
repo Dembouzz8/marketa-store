@@ -2,14 +2,63 @@ import { createServerClient } from "@supabase/ssr"
 import { type NextRequest, NextResponse } from "next/server"
 
 const failurePath = "/account/login?vendor_onboarding=1&invite_error=1"
+const confirmPath = "/vendor/auth/confirm"
 const successPath = "/vendor/onboarding"
+const inviteCookieName = "marketa-vendor-invite"
+const inviteCookiePath = "/vendor/auth"
+const inviteCookieMaxAgeSeconds = 600
 const maxTokenHashLength = 1024
+
+function validTokenHash(tokenHash: string): boolean {
+  return (
+    tokenHash.length > 0 &&
+    tokenHash.length <= maxTokenHashLength &&
+    !/[\s\x00-\x1f\x7f]/u.test(tokenHash)
+  )
+}
 
 function fixedRedirect(request: NextRequest, path: string) {
   const response = NextResponse.redirect(new URL(path, request.url), 303)
   response.headers.set("Cache-Control", "private, no-store")
   response.headers.set("Referrer-Policy", "no-referrer")
   return response
+}
+
+function clearInviteCookie(response: NextResponse) {
+  response.cookies.set({
+    name: inviteCookieName,
+    value: "",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: inviteCookiePath,
+    maxAge: 0,
+  })
+}
+
+function failureRedirect(request: NextRequest) {
+  const response = fixedRedirect(request, failurePath)
+  try {
+    clearInviteCookie(response)
+  } catch {
+    // The failed response contains no Auth cookies even if cookie writes fail.
+  }
+  return response
+}
+
+function readInviteCookie(value: string | undefined): string | null {
+  if (!value || value.length > maxTokenHashLength + 14) return null
+
+  const separator = value.indexOf(":")
+  if (separator !== 13) return null
+
+  const issuedAtText = value.slice(0, separator)
+  if (!/^\d{13}$/u.test(issuedAtText)) return null
+
+  const age = Date.now() - Number(issuedAtText)
+  const tokenHash = value.slice(separator + 1)
+  if (age < 0 || age > inviteCookieMaxAgeSeconds * 1000) return null
+  return validTokenHash(tokenHash) ? tokenHash : null
 }
 
 export async function GET(request: NextRequest) {
@@ -23,19 +72,39 @@ export async function GET(request: NextRequest) {
     names.some((name) => name !== "token_hash" && name !== "type") ||
     tokenHashes.length !== 1 ||
     types.length !== 1 ||
-    types[0] !== "invite"
+    types[0] !== "invite" ||
+    !validTokenHash(tokenHashes[0])
   ) {
-    return fixedRedirect(request, failurePath)
+    return failureRedirect(request)
   }
 
-  const tokenHash = tokenHashes[0]
-  if (
-    !tokenHash ||
-    tokenHash.length > maxTokenHashLength ||
-    /[\s\x00-\x1f\x7f]/u.test(tokenHash)
-  ) {
-    return fixedRedirect(request, failurePath)
+  try {
+    const response = fixedRedirect(request, confirmPath)
+    response.cookies.set({
+      name: inviteCookieName,
+      value: `${Date.now()}:${tokenHashes[0]}`,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: inviteCookiePath,
+      maxAge: inviteCookieMaxAgeSeconds,
+    })
+    return response
+  } catch {
+    return failureRedirect(request)
   }
+}
+
+export async function POST(request: NextRequest) {
+  if (
+    request.nextUrl.searchParams.size !== 0 ||
+    request.headers.get("origin") !== request.nextUrl.origin
+  ) {
+    return failureRedirect(request)
+  }
+
+  const tokenHash = readInviteCookie(request.cookies.get(inviteCookieName)?.value)
+  if (!tokenHash) return failureRedirect(request)
 
   const response = fixedRedirect(request, successPath)
   const cookies = new Map(
@@ -76,7 +145,7 @@ export async function GET(request: NextRequest) {
       type: "invite",
     })
     if (error || !data.session || !data.user || writtenCookies.size === 0) {
-      return fixedRedirect(request, failurePath)
+      return failureRedirect(request)
     }
 
     const { data: verified, error: userError } = await supabase.auth.getUser()
@@ -86,11 +155,12 @@ export async function GET(request: NextRequest) {
       verified.user.id !== data.user.id ||
       writtenCookies.size === 0
     ) {
-      return fixedRedirect(request, failurePath)
+      return failureRedirect(request)
     }
 
+    clearInviteCookie(response)
     return response
   } catch {
-    return fixedRedirect(request, failurePath)
+    return failureRedirect(request)
   }
 }
