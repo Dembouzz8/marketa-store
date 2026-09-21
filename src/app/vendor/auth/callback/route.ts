@@ -61,6 +61,37 @@ function readInviteCookie(value: string | undefined): string | null {
   return validTokenHash(tokenHash) ? tokenHash : null
 }
 
+function isTrustedConfirmationPost(request: NextRequest): boolean {
+  const expectedOrigin = request.nextUrl.origin
+  const origin = request.headers.get("origin")
+
+  if (origin && origin !== "null") {
+    return origin === expectedOrigin
+  }
+
+  const fetchSite = request.headers.get("sec-fetch-site")
+  if (fetchSite !== null) {
+    if (fetchSite !== "same-origin") return false
+
+    const fetchMode = request.headers.get("sec-fetch-mode")
+    if (fetchMode !== null && fetchMode !== "navigate") return false
+
+    const fetchDestination = request.headers.get("sec-fetch-dest")
+    if (fetchDestination !== null && fetchDestination !== "document") return false
+
+    return true
+  }
+
+  const referer = request.headers.get("referer")
+  if (!referer) return false
+
+  try {
+    return new URL(referer).origin === expectedOrigin
+  } catch {
+    return false
+  }
+}
+
 export async function GET(request: NextRequest) {
   const parameters = request.nextUrl.searchParams
   const names = [...parameters.keys()]
@@ -98,7 +129,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (
     request.nextUrl.searchParams.size !== 0 ||
-    request.headers.get("origin") !== request.nextUrl.origin
+    !isTrustedConfirmationPost(request)
   ) {
     return failureRedirect(request)
   }

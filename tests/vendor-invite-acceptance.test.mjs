@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
+import { createRequire } from "node:module"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
@@ -7,6 +8,8 @@ import vm from "node:vm"
 import ts from "typescript"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const require = createRequire(import.meta.url)
+const { NextRequest: RealNextRequest, NextResponse: RealNextResponse } = require("next/server")
 const callbackFile = "src/app/vendor/auth/callback/route.ts"
 const failurePath = "/account/login?vendor_onboarding=1&invite_error=1"
 const inviteCookieName = "marketa-vendor-invite"
@@ -82,11 +85,31 @@ function responseClass(rejectCookieName = null) {
   }
 }
 
-function request(pathname, { cookies = [], origin = null } = {}) {
+function request(pathname, {
+  cookies = [],
+  origin,
+  fetchSite,
+  fetchMode,
+  fetchDestination,
+  referer,
+} = {}) {
   const url = `https://example.test${pathname}`
   const headers = new Headers()
-  if (origin !== null) headers.set("Origin", origin)
+  if (origin !== undefined) headers.set("Origin", origin)
+  if (fetchSite !== undefined) headers.set("Sec-Fetch-Site", fetchSite)
+  if (fetchMode !== undefined) headers.set("Sec-Fetch-Mode", fetchMode)
+  if (fetchDestination !== undefined) headers.set("Sec-Fetch-Dest", fetchDestination)
+  if (referer !== undefined) headers.set("Referer", referer)
   return { url, nextUrl: new URL(url), cookies: new CookieJar(cookies), headers }
+}
+
+function realRequest(pathname, { method = "GET", cookie, headers = {} } = {}) {
+  const requestHeaders = new Headers(headers)
+  if (cookie) requestHeaders.set("Cookie", cookie)
+  return new RealNextRequest(`https://example.test${pathname}`, {
+    method,
+    headers: requestHeaders,
+  })
 }
 
 function destination(response) {
@@ -98,7 +121,9 @@ function callback(mode = {}) {
   let clientCreations = 0
   let verifications = 0
   let userChecks = 0
-  const NextResponse = responseClass(mode.rejectCookieName)
+  const NextResponse = mode.realNextResponse
+    ? RealNextResponse
+    : responseClass(mode.rejectCookieName)
   const handler = load(callbackFile, {
     "next/server": { NextResponse },
     "@supabase/ssr": {
@@ -149,6 +174,37 @@ async function transientCookie(handler) {
   )
   return { response, cookie: response.cookies.get(inviteCookieName) }
 }
+
+test("real Next GET serializes and round-trips the transient cookie", async () => {
+  const { handler, counts } = callback({ realNextResponse: true })
+  const response = await handler.GET(realRequest(
+    "/vendor/auth/callback?token_hash=validhash&type=invite"
+  ))
+
+  assert.equal(response.status, 303)
+  assert.equal(new URL(response.headers.get("Location")).pathname, "/vendor/auth/confirm")
+  const setCookie = response.headers.get("Set-Cookie")
+  assert.ok(setCookie)
+  assert.match(setCookie, /^marketa-vendor-invite=/)
+  assert.match(setCookie, /(?:^|; )Path=\/vendor\/auth(?:;|$)/)
+  assert.match(setCookie, /(?:^|; )Max-Age=600(?:;|$)/)
+  assert.match(setCookie, /(?:^|; )HttpOnly(?:;|$)/)
+  assert.match(setCookie, /(?:^|; )Secure(?:;|$)/)
+  assert.match(setCookie, /(?:^|; )SameSite=lax(?:;|$)/)
+  assert.deepEqual(counts(), { clientCreations: 0, verifications: 0, userChecks: 0 })
+
+  const cookie = setCookie.split(";", 1)[0]
+  const postRequest = realRequest("/vendor/auth/callback", {
+    method: "POST",
+    cookie,
+    headers: { Origin: "https://example.test" },
+  })
+  assert.match(postRequest.cookies.get(inviteCookieName)?.value ?? "", /:validhash$/)
+
+  const postResponse = await handler.POST(postRequest)
+  assert.equal(new URL(postResponse.headers.get("Location")).pathname, "/vendor/onboarding")
+  assert.deepEqual(counts(), { clientCreations: 1, verifications: 1, userChecks: 1 })
+})
 
 test("scanner GET sets only a transient cookie and never verifies", async () => {
   const { handler, counts } = callback()
@@ -212,14 +268,103 @@ test("explicit same-origin POST verifies exactly once and reaches onboarding", a
   assert.equal(response.cookies.get(inviteCookieName).value, "")
 })
 
+test("same-origin Fetch Metadata accepts unusable Origin values", async () => {
+  for (const source of [
+    { fetchSite: "same-origin" },
+    {
+      origin: "",
+      fetchSite: "same-origin",
+      fetchMode: "navigate",
+      fetchDestination: "document",
+    },
+    {
+      origin: "null",
+      fetchSite: "same-origin",
+      fetchMode: "navigate",
+      fetchDestination: "document",
+    },
+  ]) {
+    const { handler, counts } = callback()
+    const { cookie } = await transientCookie(handler)
+    const response = await handler.POST(request("/vendor/auth/callback", {
+      cookies: [cookie],
+      ...source,
+    }))
+    assert.equal(destination(response), "/vendor/onboarding")
+    assert.deepEqual(counts(), { clientCreations: 1, verifications: 1, userChecks: 1 })
+  }
+})
+
+test("same-origin Referer is the final source fallback", async () => {
+  const { handler, counts } = callback()
+  const { cookie } = await transientCookie(handler)
+  const response = await handler.POST(request("/vendor/auth/callback", {
+    cookies: [cookie],
+    referer: "https://example.test/vendor/auth/confirm",
+  }))
+  assert.equal(destination(response), "/vendor/onboarding")
+  assert.deepEqual(counts(), { clientCreations: 1, verifications: 1, userChecks: 1 })
+})
+
+test("explicit cross-origin Origin cannot be overridden by Fetch Metadata", async () => {
+  const { handler, counts } = callback()
+  const { cookie } = await transientCookie(handler)
+  const response = await handler.POST(request("/vendor/auth/callback", {
+    cookies: [cookie],
+    origin: "https://attacker.test",
+    fetchSite: "same-origin",
+    fetchMode: "navigate",
+    fetchDestination: "document",
+    referer: "https://example.test/vendor/auth/confirm",
+  }))
+  assert.equal(destination(response), failurePath)
+  assert.equal(counts().verifications, 0)
+})
+
+test("untrusted or malformed Fetch Metadata fails closed", async () => {
+  for (const metadata of [
+    { fetchSite: "same-site" },
+    { fetchSite: "cross-site" },
+    { fetchSite: "none" },
+    { fetchSite: "unknown" },
+    { fetchSite: "" },
+    { fetchSite: "same-origin", fetchMode: "cors" },
+    { fetchSite: "same-origin", fetchDestination: "iframe" },
+  ]) {
+    const { handler, counts } = callback()
+    const { cookie } = await transientCookie(handler)
+    const response = await handler.POST(request("/vendor/auth/callback", {
+      cookies: [cookie],
+      ...metadata,
+    }))
+    assert.equal(destination(response), failurePath)
+    assert.equal(counts().verifications, 0)
+  }
+})
+
+test("malformed, cross-origin, or missing Referer fails closed", async () => {
+  for (const referer of ["not a URL", "https://attacker.test/form", undefined]) {
+    const { handler, counts } = callback()
+    const { cookie } = await transientCookie(handler)
+    const response = await handler.POST(request("/vendor/auth/callback", {
+      cookies: [cookie],
+      referer,
+    }))
+    assert.equal(destination(response), failurePath)
+    assert.equal(counts().verifications, 0)
+  }
+})
+
 test("missing, expired, malformed, and cross-origin state never verifies", async () => {
   const { handler, counts } = callback()
   const { cookie } = await transientCookie(handler)
   const expired = { ...cookie, value: `${Date.now() - 601000}:validhash` }
+  const future = { ...cookie, value: `${Date.now() + 1000}:validhash` }
   const malformed = { ...cookie, value: "bad-state" }
   for (const options of [
     { cookies: [], origin: "https://example.test" },
     { cookies: [expired], origin: "https://example.test" },
+    { cookies: [future], origin: "https://example.test" },
     { cookies: [malformed], origin: "https://example.test" },
     { cookies: [cookie], origin: "https://attacker.test" },
     { cookies: [cookie] },
@@ -228,6 +373,17 @@ test("missing, expired, malformed, and cross-origin state never verifies", async
     assert.equal(destination(response), failurePath)
     assert.equal(response.cookies.get("sb-auth"), undefined)
   }
+  assert.equal(counts().verifications, 0)
+})
+
+test("POST query parameters fail before verification", async () => {
+  const { handler, counts } = callback()
+  const { cookie } = await transientCookie(handler)
+  const response = await handler.POST(request("/vendor/auth/callback?next=%2Fvendor", {
+    cookies: [cookie],
+    origin: "https://example.test",
+  }))
+  assert.equal(destination(response), failurePath)
   assert.equal(counts().verifications, 0)
 })
 
@@ -255,6 +411,24 @@ test("later verification failures discard partially written Auth cookies", async
   }
 })
 
+test("real Next failure response does not serialize partial Auth cookies", async () => {
+  const { handler, counts } = callback({ mismatch: true, realNextResponse: true })
+  const getResponse = await handler.GET(realRequest(
+    "/vendor/auth/callback?token_hash=validhash&type=invite"
+  ))
+  const cookie = getResponse.headers.get("Set-Cookie").split(";", 1)[0]
+  const response = await handler.POST(realRequest("/vendor/auth/callback", {
+    method: "POST",
+    cookie,
+    headers: { Origin: "https://example.test" },
+  }))
+
+  assert.equal(new URL(response.headers.get("Location")).pathname, "/account/login")
+  assert.equal(response.headers.get("Set-Cookie")?.includes("sb-auth"), false)
+  assert.match(response.headers.get("Set-Cookie") ?? "", /marketa-vendor-invite=/)
+  assert.deepEqual(counts(), { clientCreations: 1, verifications: 1, userChecks: 1 })
+})
+
 test("Auth-cookie write failure fails safely without returning a partial session", async () => {
   const { handler, counts } = callback({ rejectCookieName: "sb-auth" })
   const { cookie } = await transientCookie(handler)
@@ -274,12 +448,15 @@ test("proxy allows only the exact two signed-out Auth paths", async () => {
       createServerClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
     },
   })
-  for (const route of ["/vendor/auth/callback", "/vendor/auth/confirm"]) {
-    const response = await proxy(request(route))
-    assert.equal(response.status, 200)
-    assert.equal(response.headers.get("Cache-Control"), "private, no-store")
-    assert.equal(response.headers.get("Referrer-Policy"), "no-referrer")
-  }
+  const callbackResponse = await proxy(request("/vendor/auth/callback"))
+  assert.equal(callbackResponse.status, 200)
+  assert.equal(callbackResponse.headers.get("Cache-Control"), "private, no-store")
+  assert.equal(callbackResponse.headers.get("Referrer-Policy"), "no-referrer")
+
+  const confirmResponse = await proxy(request("/vendor/auth/confirm"))
+  assert.equal(confirmResponse.status, 200)
+  assert.equal(confirmResponse.headers.get("Cache-Control"), "private, no-store")
+  assert.equal(confirmResponse.headers.get("Referrer-Policy"), "same-origin")
   for (const route of ["/vendor/dashboard", "/vendor/orders", "/vendor/products", "/vendor/auth/confirm-extra"]) {
     const response = await proxy(request(route))
     assert.equal(destination(response), "/vendor/login")

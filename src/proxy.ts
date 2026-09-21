@@ -108,8 +108,11 @@ export async function proxy(request: NextRequest) {
   if (isVendorCallback || isVendorConfirm || isVendorOnboarding) {
     response.headers.set("Cache-Control", "private, no-store")
   }
-  if (isVendorCallback || isVendorConfirm) {
+  if (isVendorCallback) {
     response.headers.set("Referrer-Policy", "no-referrer")
+  }
+  if (isVendorConfirm) {
+    response.headers.set("Referrer-Policy", "same-origin")
   }
 
   return response
