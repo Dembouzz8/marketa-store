@@ -440,3 +440,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/payment-status/deno.json"
 entrypoint = "./functions/payment-status/index.ts"
+
+[functions.initiate-vendor-provisioning]
+enabled = true
+verify_jwt = true
+import_map = "./functions/initiate-vendor-provisioning/deno.json"
+entrypoint = "./functions/initiate-vendor-provisioning/index.ts"
