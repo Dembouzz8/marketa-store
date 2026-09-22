@@ -1,199 +1,219 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-09-17. Recheck repository, linked migrations, and live Auth
-configuration before acting in a fresh conversation. The repository and
-applied migrations take precedence over this handoff if they differ.
+Snapshot: 2026-09-22. Recheck the repository, linked migrations, and live
+Supabase/Auth configuration before acting in a fresh conversation. The
+repository and applied migrations take precedence over this handoff.
 
-## Repository state
+## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `230b1e1d9b10f23de40dbc890785e0c4bac2ae72` (`feat: harden vendor invite acceptance flow`).
-- Local `origin/main` tracking HEAD: the same commit.
-- Working tree at this handoff: `README.md`, `STOREFRONT_V2.md`,
-  `docs/CODEX_HANDOFF.md`, and `src/components/vendor/sidebar.tsx` are
-  modified. `tests/vendor-logout.test.mjs` is untracked. No migration was
-  changed. The vendor logout hotfix is local, pending review, and has not been
-  committed or deployed.
-- Linked migrations: all 14 local and remote versions match through
-  `20260917120000_add_vendor_application_auth_identity_resolver.sql`. The
-  Batch 3A migration is applied to the linked project and tracked locally.
+- HEAD: `4b2cc05a89a2ab6db4ab28b583909ada4920ee3c`
+  (`add admin vendor provisiong control`).
+- Local `origin/main`: the same commit.
+- Working tree before this documentation update was clean. At this handoff,
+  only `docs/CODEX_HANDOFF.md` is modified.
+- Linked migration state: all 14 local and remote versions match through
+  `20260917120000_add_vendor_application_auth_identity_resolver.sql`. Batch 3D
+  added no migration.
 
-## Overall Marketa status
+## Current product state
 
-The current storefront has a homepage, searchable/filterable product
-catalogue and detail pages, public vendor directory/storefronts, seller
-application submission, and a persisted cart. Customer Auth, profile, order
+The storefront includes the homepage, searchable and filterable product
+catalogue, product details, public vendor directory and storefronts, seller
+application submission, and a persisted cart. Customer Auth, profiles, order
 history, saved addresses, authenticated checkout, server-side payment
 confirmation, and confirmed-payment cart finalization are implemented.
-Vendor login/dashboard and the public vendor-verification presentation remain
-separate from customer accounts. This summary does not declare every deferred
-storefront or vendor enhancement complete.
 
-## Vendor provisioning work completed
+Customer, vendor, and admin entry points share Supabase browser-session
+infrastructure while retaining separate authorization checks. A customer
+session alone does not grant vendor or admin access.
 
-- **Vendor Provisioning Batch 1A — COMPLETE:** private `admin_users`
-  authorization foundation; application provisioning state; future vendors
-  inactive by default; protected vendor activation and platform-fee fields.
-- **Location reconciliation — COMPLETE:** vendor-application location maximum
-  aligned with the vendor profile's 120-character limit.
-- **Vendor Provisioning Batch 1B — COMPLETE:** service-role-only
-  `review_vendor_application`, `claim_vendor_application_provisioning`,
-  `record_vendor_application_auth_identity`,
-  `fail_vendor_application_provisioning`, and
-  `finalize_vendor_application_provisioning` functions.
-- **First admin bootstrap — COMPLETE:** one confirmed non-vendor Auth account
-  was deliberately added to `admin_users`. No account identifier is recorded
-  here.
-- **Vendor Provisioning Batch 2 — COMPLETE:** `/admin/login`, protected admin
-  vendor-application list/detail, and start-review/approve/reject actions.
-  Reviewer identity comes from the authenticated admin session. There is no
-  provisioning control, Auth Admin call, vendor activation, or verification.
-- **Vendor Provisioning Batch 3A — COMPLETE:** application-scoped,
-  service-role-only, read-only Auth identity resolution through
-  `public.resolve_vendor_application_auth_identity(uuid)`. Its migration was
-  source-reviewed, applied, and validated on the linked project.
-- **Vendor Provisioning Batch 3B — COMPLETE/DEPLOYED:** a strict invite-token
-  callback, pre-vendor onboarding landing, fixed customer-login return, and
-  narrow proxy routing were committed and deployed. No real invitation was sent.
-- **Batch 3C read-only audit — COMPLETE:** production Auth URL, redirect,
-  template, and email-delivery configuration were checked. The chosen
-  production origin is `https://marketa-store.vercel.app`; real invitations
-  remain disabled.
-- **Vendor Provisioning Batch 3C1 — COMMITTED ON MAIN:** scanner-safe invite
-  acceptance requires an explicit POST after a token-free confirmation page.
-  Its deployment status was not rechecked during the vendor logout hotfix.
+## Vendor provisioning status
 
-## Batch 3 status and boundary
+Batch 3 remains **IN PROGRESS**. It is production validated through the
+`awaiting_enrollment` boundary; seller-owned finalization is the next batch.
 
-- **Batch 3 read-only audit — COMPLETE.**
-- **Batch 3 implementation — IN PROGRESS:** Batch 3A is complete and its
-  migration is applied. Batch 3B is committed and deployed. The Batch 3C
-  audit is complete. Batch 3C1 is committed on main; its deployment status was
-  not rechecked during the vendor logout hotfix. Batch 3C2 has not begun.
-- Goal: Auth identity resolution, invitation, and provisioning initiation.
-  Admin approval leaves an application `approved/not_started`; an authorized
-  admin must explicitly start provisioning.
-- Required Batch 3 stopping point: `status = approved`,
-  `provisioning_status = awaiting_enrollment`, `auth_user_id` recorded,
-  `vendor_id = NULL`, and `provisioned_at = NULL`.
-- Batch 3 must **not** call `finalize_vendor_application_provisioning()`.
-  Finalization belongs to a later explicit, authenticated vendor-enrollment
-  action by the recorded account owner.
+### Foundation and review
 
-Batch 3A accepts only an application UUID and derives the normalized email
-inside the resolver. Linked validation confirmed owner `postgres`,
-`SECURITY DEFINER`, an empty `search_path`, no EXECUTE for `anon` or
-`authenticated`, and EXECUTE for `service_role`. An approved/not_started
-application resolved read-only as expected, with no application, vendor, or
-Auth data mutation. Batch 3A does not claim provisioning, send invitations,
-create Auth users, record application Auth identity, create vendors, finalize
-provisioning, activate vendors, or verify vendors.
+- **Batch 1A — COMPLETE/APPLIED:** private `admin_users` authorization;
+  vendor-application provisioning fields and state model; inactive-by-default
+  vendors; narrowed seller privileges. Location-length reconciliation was
+  applied separately.
+- **Admin bootstrap — COMPLETE:** a confirmed, non-vendor Auth account was
+  deliberately added to `admin_users`; no account identifier is recorded here.
+- **Batch 1B — COMPLETE/APPLIED:** service-role-only transition functions:
+  - `review_vendor_application(...)`
+  - `claim_vendor_application_provisioning(uuid)`
+  - `record_vendor_application_auth_identity(uuid, uuid, boolean)`
+  - `fail_vendor_application_provisioning(uuid, text)`
+  - `finalize_vendor_application_provisioning(uuid, uuid)`
+- **Batch 2 — COMPLETE/DEPLOYED:** minimal admin application review UI with
+  server-side admin authorization. Approval leaves the application at
+  `approved/not_started`; it does not provision an identity or vendor.
 
-Approval is not provisioning; provisioning is not activation; activation is
-not verification. An existing customer Auth identity must be reused, never
-duplicated merely because the customer becomes a vendor. Matching email alone
-does not establish consent to vendor enrollment. The actual account owner
-must authenticate before finalization. A vendor row, when eventually created,
-starts inactive; verification is separate. Auth Admin/service-role credentials
-remain server-only.
+The core invariant is: **approved != provisioned != active != verified**.
 
-## Batch 3 implementation direction
+### Auth identity and invitation acceptance
 
-Use a dedicated Supabase Edge Function as the trusted authority. The browser
-may send only an application UUID with the admin session JWT. The function
-must call `auth.getUser(jwt)`, derive the caller UUID, check private
-`admin_users` membership, then use service-role provisioning RPCs and Auth
-Admin operations. Do not accept browser-supplied admin/reviewer UUID, email,
-Auth UUID, vendor UUID, fee, activation, verification, or redirect URL.
+- **Batch 3A — COMPLETE/APPLIED:**
+  `public.resolve_vendor_application_auth_identity(uuid)` is an
+  application-scoped, read-only, service-role-only resolver. Controlled
+  outcomes are `existing_confirmed`, `existing_unconfirmed`, `not_found`,
+  `vendor_collision`, `ambiguous_identity`, `invalid_state`, `unavailable`,
+  and `invalid_input`. Linked validation confirmed owner `postgres`,
+  `SECURITY DEFINER`, an empty `search_path`, no execution by `anon` or
+  `authenticated`, and execution by `service_role`.
+- **Batch 3B — COMPLETE/DEPLOYED:** vendor Auth callback, pre-vendor onboarding
+  landing, fixed customer-login return, and narrow proxy exceptions. Vendor
+  dashboard protection remains in force.
+- **Batch 3C read-only audit — COMPLETE:** the production Auth URL, redirect,
+  invitation-template, expiry/rate-limit, and email-delivery configuration
+  were inspected before rollout.
+- **Batch 3C1 — COMPLETE/PRODUCTION VALIDATED:** scanner-safe invite acceptance:
+  - `GET /vendor/auth/callback` validates one bounded `token_hash` with
+    `type=invite`, never calls `verifyOtp`, writes a transient HttpOnly cookie,
+    and redirects without the token to `/vendor/auth/confirm`.
+  - `/vendor/auth/confirm` requires an explicit seller action.
+  - `POST /vendor/auth/callback` accepts a same-origin request or trustworthy
+    same-origin browser metadata, reads the transient cookie, then calls
+    `verifyOtp`. Success establishes the cookie-backed Auth session and
+    redirects to `/vendor/onboarding`.
+  - Failure paths clear the transient cookie and do not return partially
+    written Auth cookies.
+  - Production hotfix validation confirmed `Referrer-Policy: same-origin` on
+    the confirmation page, `Referrer-Policy: no-referrer` on the callback,
+    correct invite-cookie serialization, and a browser flow that reaches
+    `/vendor/onboarding`.
+- **Batch 3C2 — COMPLETE FOR TEST-MODE INFRASTRUCTURE:** Supabase custom SMTP
+  through Resend test mode, the seller invitation template, and invitation
+  delivery were validated. A production sending domain and sender remain
+  deliberately deferred; no production sending domain is claimed here.
 
-The installed Supabase SDK has no suitable get-user-by-email API. Batch 3A
-added the narrow, service-role-only `SECURITY DEFINER` Auth resolver scoped
-to an application ID. It derives the application email internally and returns
-only controlled identity states, never a general arbitrary-email enumeration
-surface. Edge orchestration and invitation remain unimplemented. Neither
-Batch 3B nor Batch 3C1 calls this resolver or any provisioning RPC.
+### Batch 3D provisioning initiation
 
-- Existing confirmed customer: reuse the Auth UUID, record it with
-  `p_invited = false`, enter `awaiting_enrollment`, and send a separate
-  approved/sign-in notification. Do not reinvite or finalize.
-- New email: trusted server calls `auth.admin.inviteUserByEmail()` with a
-  fixed vendor callback destination, verifies the returned UUID/email, and
-  records with `p_invited = true`. Do not finalize.
-- Existing unconfirmed Auth account: do not blindly reinvite or create a
-  duplicate; use controlled remediation/recovery.
-- Existing vendor collision: fail closed for manual review; never merge or
-  adopt automatically.
+- **Batch 3D1 — COMPLETE/COMMITTED/PUSHED/DEPLOYED/PRODUCTION VALIDATED:** the
+  `initiate-vendor-provisioning` Supabase Edge Function is active with
+  `verify_jwt = true`.
+- The function explicitly calls `auth.getUser(accessToken)`, derives the caller
+  from that verified user, checks private `admin_users` membership, and
+  rechecks membership immediately before any invitation.
+- A separate service-role client performs the narrow Auth Admin and
+  provisioning-RPC operations. Service-role credentials never enter the
+  browser.
+- The request accepts only `application_id`. Admin/reviewer IDs, email, Auth
+  UUID, vendor UUID, fees, activation, verification, and redirect URL cannot
+  be supplied by the caller.
+- The invitation destination is fixed to
+  `https://marketa-store.vercel.app/vendor/auth/callback`.
+- The function never finalizes provisioning, creates a vendor, activates a
+  vendor, or verifies a vendor.
+- There is no automatic invitation retry or `in_progress` takeover. Supabase
+  Auth and Postgres are separate systems, so any uncertain invitation side
+  effect returns `reconciliation_required` and must not trigger a reinvite.
+- Pre-invite application read, admin recheck, and invalid application-data
+  failures use the safe failure transition when its result can be proven. If
+  the transition cannot be proven, the function returns
+  `reconciliation_required` rather than claiming a safely retryable state.
 
-Batch 1B's claim operation has no worker lease. Treat `in_progress` and
-uncertain invite responses as reconciliation cases, not permission to send a
-second invitation automatically. Auth Admin and database writes are not one
-transaction.
+Supported initiation paths:
 
-### Vendor invitation callback — chosen direction
+1. `approved/not_started` or `approved/failed` is claimed, then the scoped
+   identity resolver runs.
+2. `existing_confirmed` reuses the confirmed Auth UUID, records
+   `p_invited = false`, moves to `awaiting_enrollment`, and stops.
+3. `not_found` sends exactly one controlled invitation, validates the returned
+   identity, resolves again, records `p_invited = true`, moves to
+   `awaiting_enrollment`, and stops.
+4. `existing_unconfirmed`, vendor collision, or ambiguity enters a controlled
+   manual/reconciliation path without a blind invitation.
+5. `already_in_progress` returns `reconciliation_required` without work or
+   takeover.
 
-**Batch 3B is complete and deployed.** Its vendor Auth callback, onboarding
-landing, fixed customer-login return, and narrow proxy routing let pre-vendor
-paths be reached without granting vendor dashboard access. Batch 3B sent no
-real invitations.
+Batch 3D1 verification passed 28 focused tests, the project typecheck, Edge
+static TypeScript check, changed-file lint, production build, and diff check.
 
-Because this app uses Next.js SSR/cookie Auth, a later invitation rollout must
-customize the invite template to send a token hash to the fixed first-party
-template target
-`/vendor/auth/callback?token_hash={{ .TokenHash }}&type=invite` (template
-syntax only; never record an issued invite link). Batch 3C1 changes the
-earlier callback behavior in the current repository: GET accepts only one
-bounded `token_hash` and `type=invite`, rejects all other query parameters,
-stores a ten-minute HttpOnly invite cookie scoped to `/vendor/auth`, and
-redirects to the clean `/vendor/auth/confirm` page without verifying the
-token. An explicit, same-origin POST reads only that cookie, calls `verifyOtp`
-once through an anon SSR client, requires a session and user, and confirms the
-same user with
-`getUser`, clears the transient cookie, and redirects to `/vendor/onboarding`.
-Failure uses a fixed customer-login destination and discards any response
-containing partially written Auth cookies. An already consumed invite may not
-be recoverable after a later verification failure. The callback and confirm
-responses use `private, no-store` and `no-referrer` headers. The dynamic
-onboarding page checks the authenticated user and vendor membership with a
-user-scoped client; it redirects existing vendors to the dashboard, sends
-signed-out users to customer login, and gives non-vendors an informational
-landing. The proxy exempts only the exact callback and confirm paths from its
-signed-out vendor gate; vendor dashboard, order, and product protections remain.
-The customer login recognizes only `vendor_onboarding=1` as a fixed return to
-`/vendor/onboarding`. Batch 3C1 deployment status was not rechecked during
-the vendor logout hotfix. The hosted Auth template and remote settings have
-not been changed by this repository work.
+- **Batch 3D2 — COMPLETE/COMMITTED/PUSHED/VERCEL PRODUCTION
+  VALIDATED:** admin initiation now follows:
 
-## Vendor logout hotfix
+  `Admin form -> Next Server Action -> assertAdminOrigin() -> requireAdmin()`
+  `-> cookie-backed Supabase server client`
+  `-> functions.invoke("initiate-vendor-provisioning")`
+  `-> Edge JWT/admin validation -> controlled UI result`
 
-**Implemented locally, pending review; not committed or deployed.** The vendor
-sidebar now uses the cookie-backed `createSupabaseBrowserClient()` and calls
-`auth.signOut({ scope: "local" })` for the current shared browser session.
-Desktop and mobile controls share one handler, pending state, and controlled
-error message. Successful sign-out navigates the browser to `/vendor/login`;
-failure leaves the vendor on the current page without displaying a raw Auth
-error. The focused isolated tests, TypeScript, ESLint, and production build
-passed. Manual browser QA remains outstanding. Vendor authorization and
-database migrations were not changed.
+- `approved/not_started` shows **Start seller enrollment**.
+- `approved/failed` shows an explicit **Retry seller enrollment** control.
+- `in_progress` shows reconciliation guidance and no submit control.
+- `awaiting_enrollment` shows waiting guidance and no submit control.
+- A provisioned application, or an application with vendor/provisioned
+  linkage, shows no initiation control.
+- The Server Action sends only `application_id`, uses the user's cookie-backed
+  session, does not use a service-role client, does not manually forward
+  privileged credentials, and does not retry transport or uncertain failures.
+  It maps only stable function outcomes, treats malformed or transport
+  responses as uncertain, and revalidates the admin list and detail paths.
 
-## Live-invitation blockers and next rollout gate
+Batch 3D2 passed 8 focused admin tests. The combined Batch 3D report passed
+36/36 tests, project typecheck, changed-file lint, production build, and diff
+check before deployment.
 
-The completed Batch 3C read-only audit confirmed the production origin
-`https://marketa-store.vercel.app`, while hosted Auth still used
-`http://localhost:3000` as its Site URL, had no additional allowed redirect
-URLs, used the generic invite template with `.ConfirmationURL`, and had no
-custom SMTP. The configured invite expiry was one hour and the email rate
-limit was two per hour. The sender provider/domain remains undecided. No
-existing Resend transactional-email helper was found in this repository.
-Recheck hosted settings before rollout; they can change outside Git. Keep real
-invitations disabled until Batch 3C1 is reviewed and deployed and production
-Auth URLs/allow-list, invite template, and delivery provider are configured
-and tested. Provisioning orchestration remains unimplemented.
+## Production validation through awaiting enrollment
+
+- The deployed Edge Function was verified active with `verify_jwt = true`.
+- A request without authorization returned HTTP 401.
+- A request with an invalid bearer JWT returned HTTP 401.
+- A disposable approved application began at `approved/not_started` with no
+  Auth linkage, vendor linkage, provisioning timestamp, matching Auth user, or
+  matching vendor.
+- One admin click reported that the invitation was sent, moved the application
+  to `awaiting_enrollment`, created and recorded the Auth identity, and set the
+  application and Auth invitation timestamps. It did not create a vendor or
+  set `vendor_id` or `provisioned_at`.
+- The seller accepted the delivered invitation through the confirmation page,
+  explicitly continued enrollment, and reached `/vendor/onboarding`.
+- Final verification showed an approved application still at
+  `awaiting_enrollment`, the same linked Auth UUID, a confirmed Auth email,
+  `last_sign_in_at`, and an active session. `vendor_id` and `provisioned_at`
+  remained null, with no vendor or vendor-verification row.
+
+No disposable identifiers, email addresses, invite material, session tokens,
+cookies, service-role credentials, Resend keys, or SMTP credentials belong in
+project documentation.
+
+## Immediate next batch: seller-owned finalization
+
+Implement only an explicit, authenticated seller finalization action:
+
+1. Verify the current Auth session on the server.
+2. Require the session user's UUID to exactly equal
+   `vendor_applications.auth_user_id`.
+3. Require the confirmed, normalized Auth email to exactly equal the
+   application's normalized email.
+4. Call the existing
+   `finalize_vendor_application_provisioning(application_id, auth_user_id)`
+   authority.
+5. Create the inactive vendor, set `provisioning_status = provisioned`, and
+   stop.
+
+Do not trust a request-supplied Auth UUID or email. Invite acceptance alone
+must not silently finalize enrollment. This batch must not activate or verify
+the vendor, create `vendor_verifications`, or change payments, orders, outbox,
+payouts, refunds, stock, or n8n.
+
+## Frozen and parked boundaries
+
+- Vendor activation and vendor verification remain deliberate later stages.
+- Customer logout global/local semantics is a separate decision. The completed
+  vendor logout uses local scope for the current browser session.
+- The unrelated payout-table lint issue remains parked.
+- Existing image warnings remain parked.
+- Payment, order, outbox, payout, refund, stock, and n8n contracts remain
+  frozen.
+- The production Resend sending domain remains deferred.
 
 ## Documentation alignment
 
-`README.md`, `STOREFRONT_V2.md`, and `docs/CODEX_HANDOFF.md` agree that
-minimal admin application review and Batch 3A identity resolution are
-implemented, Batch 3B is deployed, Batch 3C audit is complete, and Batch 3C1
-is committed on main with deployment status not rechecked here. Batch 3
-overall remains in progress. The vendor logout hotfix is local pending review.
-Invitation, provisioning initiation, and finalization remain unimplemented.
+This handoff reflects the current repository and the stated production
+validation through Batch 3D. `README.md` and `STOREFRONT_V2.md` still contain
+older Batch 3 status text that predates 3C2 and 3D; they were intentionally not
+modified in this handoff-only batch. Update their canonical status sections in
+a separately approved documentation batch when required.
