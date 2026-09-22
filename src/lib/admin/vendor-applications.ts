@@ -9,7 +9,7 @@ export const pageSize = 25
 export const maxPage = 1000
 
 const listFields = "id,business_name,contact_name,email,business_category,location,status,provisioning_status,created_at,reviewed_at"
-const detailFields = `${listFields},phone,business_description,product_summary,experience,terms_accepted,review_notes,reviewed_by,updated_at`
+const detailFields = `${listFields},phone,business_description,product_summary,experience,terms_accepted,review_notes,reviewed_by,updated_at,vendor_id,provisioned_at`
 
 export interface ApplicationSummary {
   id: string
@@ -33,6 +33,8 @@ export interface ApplicationDetail extends ApplicationSummary {
   review_notes: string | null
   reviewed_by: string | null
   updated_at: string
+  vendor_id: string | null
+  provisioned_at: string | null
 }
 
 export async function listVendorApplications(statusInput: unknown, pageInput: unknown) {

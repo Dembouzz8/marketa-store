@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { getVendorApplication } from "@/lib/admin/vendor-applications"
+import { ProvisionForm } from "./provision-form"
 import { ReviewForm } from "./review-form"
 
 export default async function ApplicationDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -41,6 +42,14 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
         <p className="mt-3 whitespace-pre-wrap break-words text-sm text-zinc-700">{application.review_notes ?? "No review note recorded."}</p>
       </section>
       <ReviewForm applicationId={application.id} status={application.status} provisioningStatus={application.provisioning_status} />
+      <ProvisionForm
+        applicationId={application.id}
+        status={application.status}
+        provisioningStatus={application.provisioning_status}
+        hasProvisionedVendor={
+          application.vendor_id !== null || application.provisioned_at !== null
+        }
+      />
     </article>
   )
 }

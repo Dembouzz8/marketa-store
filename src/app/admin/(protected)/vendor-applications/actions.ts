@@ -2,12 +2,15 @@
 
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
+import { FunctionsHttpError } from "@supabase/supabase-js"
 import { requireAdmin } from "@/lib/admin/auth"
 import { assertAdminOrigin } from "@/lib/admin/origin"
 import { createAdminClient } from "@/lib/admin/supabase-admin"
 import { applicationIdPattern, applicationStatuses } from "@/lib/admin/vendor-applications"
+import { createSupabaseServerClient } from "@/lib/supabase-server"
 
 export type ReviewResult = { message: string; revision: string }
+export type ProvisionResult = { message: string; revision: string }
 
 const messages = {
   review_started: "Application marked under review.",
@@ -22,6 +25,86 @@ const messages = {
   unauthorized: "You no longer have access to admin review.",
   operation_failed: "We couldn't save the review. Refresh and try again.",
 } as const
+
+const provisioningMessages = {
+  awaiting_enrollment_existing:
+    "Seller enrollment is ready. The applicant can continue with their existing Marketa account.",
+  awaiting_enrollment_invited:
+    "Seller enrollment has started. An invitation was sent to the applicant.",
+  already_awaiting_enrollment:
+    "This application is already awaiting seller enrollment.",
+  manual_existing_unconfirmed:
+    "An unconfirmed account already exists for this applicant. Manual reconciliation is required.",
+  manual_vendor_collision:
+    "This application conflicts with an existing seller identity. Manual review is required.",
+  manual_ambiguous_identity:
+    "Multiple authentication identities require manual review.",
+  invalid_state:
+    "This application is no longer eligible for seller enrollment. Refresh to see its current status.",
+  reconciliation_required:
+    "Provisioning status is uncertain. Review the application before retrying.",
+  invalid_request:
+    "The seller enrollment request was rejected. Reload the page and try again.",
+  auth_required:
+    "Your admin session could not be verified. Sign in again before retrying.",
+  access_denied:
+    "You no longer have access to initiate seller enrollment.",
+  application_unavailable:
+    "This application is no longer available.",
+  method_not_allowed:
+    "Seller enrollment is temporarily unavailable. Review the application before retrying.",
+  unsupported_media_type:
+    "Seller enrollment is temporarily unavailable. Review the application before retrying.",
+  service_unavailable:
+    "Seller enrollment is temporarily unavailable. Review the application before retrying.",
+} as const
+
+const uncertainProvisioningMessage =
+  "Provisioning status is uncertain. Review the application before retrying."
+
+type ProvisioningOutcome = keyof typeof provisioningMessages
+const successfulProvisioningOutcomes = new Set<ProvisioningOutcome>([
+  "awaiting_enrollment_existing",
+  "awaiting_enrollment_invited",
+  "already_awaiting_enrollment",
+])
+
+function parseProvisioningOutcome(
+  data: unknown,
+  applicationId: string
+): ProvisioningOutcome | null {
+  if (!data || typeof data !== "object") return null
+  const record = data as Record<string, unknown>
+  if (
+    typeof record.ok !== "boolean" ||
+    typeof record.outcome !== "string" ||
+    !Object.hasOwn(provisioningMessages, record.outcome) ||
+    (record.application_id !== undefined &&
+      record.application_id !== applicationId)
+  ) {
+    return null
+  }
+  const outcome = record.outcome as ProvisioningOutcome
+  if (
+    record.ok !== successfulProvisioningOutcomes.has(outcome) ||
+    (record.ok && record.application_id !== applicationId)
+  ) {
+    return null
+  }
+  return outcome
+}
+
+async function outcomeFromFunctionError(
+  error: unknown,
+  applicationId: string
+): Promise<ProvisioningOutcome | null> {
+  if (!(error instanceof FunctionsHttpError)) return null
+  try {
+    return parseProvisioningOutcome(await error.context.json(), applicationId)
+  } catch {
+    return null
+  }
+}
 
 function parseOutcome(data: unknown, applicationId: string): keyof typeof messages | null {
   if (!Array.isArray(data) || data.length !== 1) return null
@@ -91,4 +174,54 @@ export async function reviewVendorApplication(_previous: ReviewResult, formData:
   const result = finish(outcome ? messages[outcome] : messages.operation_failed)
   if (outcome === "unauthorized") redirect("/admin/login?access=denied")
   return result
+}
+
+export async function initiateVendorProvisioning(
+  _previous: ProvisionResult,
+  formData: FormData
+): Promise<ProvisionResult> {
+  try {
+    await assertAdminOrigin()
+  } catch {
+    return {
+      message: "Invalid request. Reload the page and try again.",
+      revision: "",
+    }
+  }
+
+  await requireAdmin()
+
+  const rawId = formData.get("applicationId")
+  if (
+    typeof rawId !== "string" ||
+    !applicationIdPattern.test(rawId) ||
+    formData.getAll("applicationId").length !== 1 ||
+    Array.from(formData.keys()).some((key) => key !== "applicationId")
+  ) {
+    return { message: provisioningMessages.invalid_request, revision: "" }
+  }
+  const applicationId = rawId.toLowerCase()
+
+  let outcome: ProvisioningOutcome | null = null
+  try {
+    const supabase = await createSupabaseServerClient()
+    const { data, error } = await supabase.functions.invoke(
+      "initiate-vendor-provisioning",
+      { body: { application_id: applicationId } }
+    )
+    outcome = error
+      ? await outcomeFromFunctionError(error, applicationId)
+      : parseProvisioningOutcome(data, applicationId)
+  } catch {
+    // Invocation state can be uncertain; never retry or expose transport details.
+  }
+
+  revalidatePath("/admin/vendor-applications")
+  revalidatePath(`/admin/vendor-applications/${applicationId}`)
+  return {
+    message: outcome
+      ? provisioningMessages[outcome]
+      : uncertainProvisioningMessage,
+    revision: crypto.randomUUID(),
+  }
 }
