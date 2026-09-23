@@ -1,0 +1,681 @@
+import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import test from "node:test"
+import { fileURLToPath } from "node:url"
+import vm from "node:vm"
+import ts from "typescript"
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const helperFile = "src/lib/vendor/finalization.ts"
+const actionFile = "src/app/vendor/onboarding/actions.ts"
+const helperSource = fs.readFileSync(path.join(root, helperFile), "utf8")
+const actionSource = fs.readFileSync(path.join(root, actionFile), "utf8")
+
+const userId = "11111111-1111-4111-8111-111111111111"
+const otherUserId = "22222222-2222-4222-8222-222222222222"
+const applicationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+const otherApplicationId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+const vendorId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+const email = "seller@example.test"
+const compiledCache = new Map()
+
+function compile(file, mocks, globals = {}) {
+  let output = compiledCache.get(file)
+  if (!output) {
+    const source = fs.readFileSync(path.join(root, file), "utf8")
+    output = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true,
+      },
+    }).outputText
+    compiledCache.set(file, output)
+  }
+  const compiledModule = { exports: {} }
+  vm.runInNewContext(output, {
+    module: compiledModule,
+    exports: compiledModule.exports,
+    URL,
+    process: { env: {} },
+    crypto: { randomUUID: () => "test-revision" },
+    require(name) {
+      if (name in mocks) return mocks[name]
+      throw new Error(`Unexpected import: ${name}`)
+    },
+    ...globals,
+  }, { filename: file })
+  return compiledModule.exports
+}
+
+function awaitingApplication(overrides = {}) {
+  return {
+    id: applicationId,
+    email,
+    status: "approved",
+    provisioning_status: "awaiting_enrollment",
+    auth_user_id: userId,
+    vendor_id: null,
+    provisioned_at: null,
+    ...overrides,
+  }
+}
+
+function provisionedApplication(overrides = {}) {
+  return {
+    ...awaitingApplication(),
+    provisioning_status: "provisioned",
+    vendor_id: vendorId,
+    provisioned_at: "2026-09-22T12:00:00.000Z",
+    ...overrides,
+  }
+}
+
+function inactiveVendor(overrides = {}) {
+  return {
+    id: vendorId,
+    user_id: userId,
+    email,
+    is_active: false,
+    ...overrides,
+  }
+}
+
+function rpcRow(outcome = "provisioned", overrides = {}) {
+  const successful = outcome === "provisioned" || outcome === "already_provisioned"
+  const nullState = [
+    "invalid_input",
+    "unavailable",
+    "invalid_vendor_defaults",
+    "operation_failed",
+  ].includes(outcome)
+  return {
+    outcome,
+    application_id: applicationId,
+    vendor_id: successful ? vendorId : null,
+    provisioning_status: successful
+      ? "provisioned"
+      : nullState
+        ? null
+        : "awaiting_enrollment",
+    ...overrides,
+  }
+}
+
+function helperHarness(mode = {}) {
+  const queries = []
+  const rpcCalls = []
+  let clientCreations = 0
+
+  const state = {
+    awaitingRows: [awaitingApplication()],
+    provisionedRows: [],
+    vendorRows: [],
+    rpcData: [rpcRow()],
+    rpcError: null,
+    ...mode,
+  }
+
+  function query(table) {
+    const record = { table, fields: "", filters: [], limit: null }
+    queries.push(record)
+    const builder = {
+      select(fields) {
+        record.fields = fields
+        return builder
+      },
+      eq(column, value) {
+        record.filters.push(["eq", column, value])
+        return builder
+      },
+      is(column, value) {
+        record.filters.push(["is", column, value])
+        return builder
+      },
+      async limit(value) {
+        record.limit = value
+        if (table === "vendors") {
+          if (state.vendorThrow) throw new Error("private vendor transport")
+          return { data: state.vendorRows, error: state.vendorError ?? null }
+        }
+        const provisioningFilter = record.filters.find(
+          ([kind, column]) => kind === "eq" && column === "provisioning_status"
+        )
+        if (provisioningFilter?.[2] === "provisioned") {
+          if (state.provisionedThrow) throw new Error("private reconciliation transport")
+          return {
+            data: state.provisionedRows,
+            error: state.provisionedError ?? null,
+          }
+        }
+        if (state.awaitingThrow) throw new Error("private application transport")
+        return { data: state.awaitingRows, error: state.awaitingError ?? null }
+      },
+    }
+    return builder
+  }
+
+  const client = {
+    from: query,
+    async rpc(name, parameters) {
+      rpcCalls.push({ name, parameters })
+      if (state.rpcThrow) throw new Error("private RPC transport")
+      return { data: state.rpcData, error: state.rpcError }
+    },
+  }
+
+  const compiledExports = compile(helperFile, {
+    "server-only": {},
+    "@/lib/admin/supabase-admin": {
+      createAdminClient() {
+        clientCreations++
+        if (state.clientCreationThrow) {
+          throw new Error("private admin client initialization error")
+        }
+        return client
+      },
+    },
+  })
+
+  return {
+    finalize: () => compiledExports.finalizeSellerAccount({ userId, normalizedEmail: email }),
+    finalizeAs: (identity) => compiledExports.finalizeSellerAccount(identity),
+    queries,
+    rpcCalls,
+    clientCreations: () => clientCreations,
+  }
+}
+
+function actionHarness(mode = {}) {
+  const calls = []
+  const finalizationCalls = []
+  let serverClientCreations = 0
+  let getUserCalls = 0
+  let getSessionCalls = 0
+  const configuredUser = Object.hasOwn(mode, "user")
+    ? mode.user
+    : {
+        id: userId,
+        email: "  Seller@Example.Test  ",
+        email_confirmed_at: "2026-09-22T12:00:00.000Z",
+        user_metadata: { auth_user_id: otherUserId, email: "attacker@example.test" },
+      }
+  const requestHeaders = new Map([
+    ["origin", mode.origin === undefined ? "https://example.test" : mode.origin],
+    ["host", mode.host === undefined ? "example.test" : mode.host],
+  ].filter(([, value]) => value !== null))
+  if (mode.forwardedHost !== undefined) {
+    requestHeaders.set("x-forwarded-host", mode.forwardedHost)
+  }
+  if (mode.forwardedProto !== undefined) {
+    requestHeaders.set("x-forwarded-proto", mode.forwardedProto)
+  }
+
+  const compiledExports = compile(actionFile, {
+    "next/headers": {
+      async headers() {
+        calls.push("headers")
+        return { get: (name) => requestHeaders.get(name) ?? null }
+      },
+    },
+    "@/lib/supabase-server": {
+      async createSupabaseServerClient() {
+        calls.push("createSupabaseServerClient")
+        serverClientCreations++
+        if (mode.clientThrow) throw new Error("private client error")
+        return {
+          auth: {
+            async getUser() {
+              calls.push("getUser")
+              getUserCalls++
+              if (mode.getUserThrow) throw new Error("private Auth error")
+              return {
+                data: { user: configuredUser },
+                error: mode.userError ? new Error("private Auth error") : null,
+              }
+            },
+            async getSession() {
+              getSessionCalls++
+              throw new Error("getSession must not authorize finalization")
+            },
+          },
+        }
+      },
+    },
+    "@/lib/vendor/finalization": {
+      async finalizeSellerAccount(identity) {
+        calls.push("finalizeSellerAccount")
+        finalizationCalls.push(identity)
+        if (mode.finalizationThrow) throw new Error("private service error")
+        return mode.outcome ?? "finalized"
+      },
+    },
+  }, {
+    process: { env: { VERCEL: mode.vercel ? "1" : undefined } },
+  })
+
+  return {
+    run: (formData = new FormData()) =>
+      compiledExports.finalizeSellerEnrollment(
+        { outcome: "no_pending_enrollment", message: "", revision: "" },
+        formData
+      ),
+    calls,
+    finalizationCalls,
+    counts: () => ({ serverClientCreations, getUserCalls, getSessionCalls }),
+  }
+}
+
+test("cross-origin action is rejected before Auth or privileged work", async () => {
+  const app = actionHarness({ origin: "https://attacker.test" })
+  const result = await app.run()
+  assert.equal(result.outcome, "invalid_request")
+  assert.deepEqual(app.calls, ["headers"])
+})
+
+test("missing origin is rejected before Auth or privileged work", async () => {
+  const app = actionHarness({ origin: null })
+  assert.equal((await app.run()).outcome, "invalid_request")
+  assert.deepEqual(app.calls, ["headers"])
+})
+
+test("Vercel ingress accepts matching HTTPS forwarded origin metadata", async () => {
+  const app = actionHarness({
+    vercel: true,
+    host: "internal.test",
+    forwardedHost: "example.test",
+    forwardedProto: "https",
+  })
+  assert.equal((await app.run()).outcome, "finalized")
+})
+
+for (const [name, mode] of [
+  [
+    "HTTP Origin with HTTPS forwarded protocol",
+    {
+      origin: "http://example.test",
+      forwardedHost: "example.test",
+      forwardedProto: "https",
+    },
+  ],
+  ["missing forwarded protocol", { forwardedHost: "example.test" }],
+  [
+    "multiple forwarded protocols",
+    { forwardedHost: "example.test", forwardedProto: "https,http" },
+  ],
+  [
+    "mismatched forwarded host",
+    { forwardedHost: "other.test", forwardedProto: "https" },
+  ],
+]) {
+  test(`Vercel ingress rejects ${name} before Auth or privileged work`, async () => {
+    const app = actionHarness({ vercel: true, ...mode })
+    assert.equal((await app.run()).outcome, "invalid_request")
+    assert.deepEqual(app.calls, ["headers"])
+  })
+}
+
+for (const [name, mode] of [
+  ["missing user", { user: null }],
+  ["Auth error", { userError: true }],
+  ["getUser throw", { getUserThrow: true }],
+  ["server-client failure", { clientThrow: true }],
+  ["invalid Auth UUID", { user: { id: "not-a-uuid", email, email_confirmed_at: "confirmed" } }],
+]) {
+  test(`${name} cannot reach privileged finalization`, async () => {
+    const app = actionHarness(mode)
+    assert.equal((await app.run()).outcome, "auth_required")
+    assert.equal(app.finalizationCalls.length, 0)
+  })
+}
+
+test("action authorizes with auth.getUser and never getSession", async () => {
+  const app = actionHarness()
+  await app.run()
+  assert.equal(app.counts().getUserCalls, 1)
+  assert.equal(app.counts().getSessionCalls, 0)
+  assert.deepEqual(app.calls, [
+    "headers",
+    "createSupabaseServerClient",
+    "getUser",
+    "finalizeSellerAccount",
+  ])
+})
+
+test("user_metadata is never used as seller identity", async () => {
+  const app = actionHarness()
+  await app.run()
+  assert.deepEqual(JSON.parse(JSON.stringify(app.finalizationCalls)), [
+    { userId, normalizedEmail: email },
+  ])
+  assert.equal(actionSource.includes("user_metadata"), false)
+})
+
+test("missing Auth email is rejected", async () => {
+  const app = actionHarness({ user: { id: userId, email_confirmed_at: "confirmed" } })
+  assert.equal((await app.run()).outcome, "identity_mismatch")
+  assert.equal(app.finalizationCalls.length, 0)
+})
+
+test("unconfirmed Auth email is rejected without confirmed_at fallback", async () => {
+  const app = actionHarness({ user: { id: userId, email, confirmed_at: "confirmed" } })
+  assert.equal((await app.run()).outcome, "email_unconfirmed")
+  assert.equal(app.finalizationCalls.length, 0)
+  assert.equal(actionSource.includes("user.confirmed_at"), false)
+})
+
+test("action works without application identifier input", async () => {
+  const app = actionHarness()
+  assert.equal((await app.run(new FormData())).outcome, "finalized")
+  assert.deepEqual(JSON.parse(JSON.stringify(app.finalizationCalls)), [
+    { userId, normalizedEmail: email },
+  ])
+})
+
+for (const field of [
+  "application_id",
+  "applicationId",
+  "auth_user_id",
+  "email",
+  "vendor_id",
+]) {
+  test(`client field ${field} cannot influence authority`, async () => {
+    const data = new FormData()
+    data.set(field, field === "email" ? "attacker@example.test" : otherApplicationId)
+    const app = actionHarness()
+    assert.equal((await app.run(data)).outcome, "finalized")
+    assert.deepEqual(JSON.parse(JSON.stringify(app.finalizationCalls)), [
+      { userId, normalizedEmail: email },
+    ])
+  })
+}
+
+test("exactly one awaiting application reaches finalization", async () => {
+  const app = helperHarness()
+  assert.equal(await app.finalize(), "finalized")
+  assert.equal(app.rpcCalls.length, 1)
+})
+
+test("zero awaiting and zero provisioned applications reports no pending enrollment", async () => {
+  const app = helperHarness({ awaitingRows: [], provisionedRows: [] })
+  assert.equal(await app.finalize(), "no_pending_enrollment")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("two awaiting applications fail closed without choosing one", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication(), awaitingApplication({ id: otherApplicationId })],
+  })
+  assert.equal(await app.finalize(), "reconciliation_required")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("candidate linked to another Auth UUID cannot be selected", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication({ auth_user_id: otherUserId })],
+  })
+  assert.equal(await app.finalize(), "identity_mismatch")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("normalized candidate email must match verified Auth email", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication({ email: "other@example.test" })],
+  })
+  assert.equal(await app.finalize(), "identity_mismatch")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("candidate lookup uses only minimum fields and exact filters with limit two", async () => {
+  const app = helperHarness()
+  await app.finalize()
+  const query = app.queries[0]
+  assert.equal(
+    query.fields,
+    "id, email, status, provisioning_status, auth_user_id, vendor_id, provisioned_at"
+  )
+  assert.equal(query.limit, 2)
+  assert.deepEqual(query.filters, [
+    ["eq", "auth_user_id", userId],
+    ["eq", "status", "approved"],
+    ["eq", "provisioning_status", "awaiting_enrollment"],
+    ["is", "vendor_id", null],
+    ["is", "provisioned_at", null],
+  ])
+  assert.equal(query.fields.includes("review_notes"), false)
+  assert.equal(query.fields.includes("provisioning_error_code"), false)
+})
+
+test("RPC is invoked exactly once with derived application and verified Auth UUID", async () => {
+  const app = helperHarness()
+  await app.finalize()
+  assert.deepEqual(JSON.parse(JSON.stringify(app.rpcCalls)), [{
+    name: "finalize_vendor_application_provisioning",
+    parameters: {
+      p_application_id: applicationId,
+      p_auth_user_id: userId,
+    },
+  }])
+})
+
+test("provisioned maps to finalized only with valid vendor and provisioned state", async () => {
+  assert.equal(await helperHarness().finalize(), "finalized")
+  for (const row of [
+    rpcRow("provisioned", { vendor_id: null }),
+    rpcRow("provisioned", { vendor_id: "bad" }),
+    rpcRow("provisioned", { provisioning_status: "awaiting_enrollment" }),
+  ]) {
+    assert.equal(
+      await helperHarness({ rpcData: [row] }).finalize(),
+      "reconciliation_required"
+    )
+  }
+})
+
+test("already_provisioned maps to already_finalized only with a consistent row", async () => {
+  const app = helperHarness({ rpcData: [rpcRow("already_provisioned")] })
+  assert.equal(await app.finalize(), "already_finalized")
+})
+
+for (const outcome of ["identity_conflict", "identity_mismatch"]) {
+  test(`${outcome} maps to identity_mismatch`, async () => {
+    const app = helperHarness({ rpcData: [rpcRow(outcome)] })
+    assert.equal(await app.finalize(), "identity_mismatch")
+  })
+}
+
+test("enrollment_not_verified maps to email_unconfirmed", async () => {
+  const app = helperHarness({ rpcData: [rpcRow("enrollment_not_verified")] })
+  assert.equal(await app.finalize(), "email_unconfirmed")
+})
+
+test("vendor_collision maps without exposing identifiers", async () => {
+  const app = helperHarness({ rpcData: [rpcRow("vendor_collision")] })
+  assert.equal(await app.finalize(), "vendor_collision")
+})
+
+for (const outcome of [
+  "invalid_input",
+  "unavailable",
+  "invalid_state",
+  "application_data_invalid",
+  "invalid_vendor_defaults",
+]) {
+  test(`${outcome} maps to invalid_state`, async () => {
+    const app = helperHarness({ rpcData: [rpcRow(outcome)] })
+    assert.equal(await app.finalize(), "invalid_state")
+  })
+}
+
+test("operation_failed maps to service_unavailable", async () => {
+  const app = helperHarness({ rpcData: [rpcRow("operation_failed")] })
+  assert.equal(await app.finalize(), "service_unavailable")
+})
+
+test("malformed RPC results require reconciliation without retry", async () => {
+  for (const rpcData of [
+    null,
+    [],
+    [rpcRow(), rpcRow()],
+    [{ ...rpcRow(), application_id: otherApplicationId }],
+    [{ ...rpcRow(), outcome: "unknown" }],
+    [{ ...rpcRow("invalid_state"), vendor_id: vendorId }],
+    [{ ...rpcRow("invalid_state"), provisioning_status: "unknown" }],
+    [{ ...rpcRow("identity_mismatch"), provisioning_status: "provisioned" }],
+    [{ ...rpcRow("enrollment_not_verified"), provisioning_status: null }],
+    [{ ...rpcRow("vendor_collision"), provisioning_status: "provisioned" }],
+    [{ ...rpcRow("application_data_invalid"), provisioning_status: "failed" }],
+  ]) {
+    const app = helperHarness({ rpcData })
+    assert.equal(await app.finalize(), "reconciliation_required")
+    assert.equal(app.rpcCalls.length, 1)
+  }
+})
+
+test("malformed RPC data reconciles a consistent finalized tuple without retry", async () => {
+  const app = helperHarness({
+    rpcData: null,
+    provisionedRows: [provisionedApplication()],
+    vendorRows: [inactiveVendor()],
+  })
+  assert.equal(await app.finalize(), "already_finalized")
+  assert.equal(app.rpcCalls.length, 1)
+})
+
+test("malformed RPC data without provable finalization requires reconciliation", async () => {
+  for (const mode of [
+    { rpcData: null },
+    { rpcData: null, provisionedError: new Error("private read error") },
+  ]) {
+    const app = helperHarness(mode)
+    assert.equal(await app.finalize(), "reconciliation_required")
+    assert.equal(app.rpcCalls.length, 1)
+  }
+})
+
+test("RPC throw performs one reconciliation and never retries", async () => {
+  const app = helperHarness({ rpcThrow: true })
+  assert.equal(await app.finalize(), "reconciliation_required")
+  assert.equal(app.rpcCalls.length, 1)
+  assert.equal(
+    app.queries.filter((query) =>
+      query.filters.some((filter) => filter[1] === "provisioning_status" && filter[2] === "provisioned")
+    ).length,
+    1
+  )
+})
+
+test("uncertain RPC plus consistent provisioned reread maps to already_finalized", async () => {
+  const app = helperHarness({
+    rpcError: new Error("private transport"),
+    provisionedRows: [provisionedApplication()],
+    vendorRows: [inactiveVendor()],
+  })
+  assert.equal(await app.finalize(), "already_finalized")
+  assert.equal(app.rpcCalls.length, 1)
+})
+
+test("uncertain RPC plus still-awaiting state requires reconciliation", async () => {
+  const app = helperHarness({ rpcError: new Error("private transport") })
+  assert.equal(await app.finalize(), "reconciliation_required")
+  assert.equal(app.rpcCalls.length, 1)
+})
+
+test("existing consistent finalized state resolves without another RPC", async () => {
+  const app = helperHarness({
+    awaitingRows: [],
+    provisionedRows: [provisionedApplication()],
+    vendorRows: [inactiveVendor()],
+  })
+  assert.equal(await app.finalize(), "already_finalized")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+for (const [name, application, vendor] of [
+  ["missing provisioned timestamp", provisionedApplication({ provisioned_at: null }), inactiveVendor()],
+  ["wrong application email", provisionedApplication({ email: "other@example.test" }), inactiveVendor()],
+  ["missing vendor", provisionedApplication(), null],
+  ["wrong vendor owner", provisionedApplication(), inactiveVendor({ user_id: otherUserId })],
+  ["wrong vendor email", provisionedApplication(), inactiveVendor({ email: "other@example.test" })],
+  ["active vendor", provisionedApplication(), inactiveVendor({ is_active: true })],
+]) {
+  test(`inconsistent finalized state fails closed: ${name}`, async () => {
+    const app = helperHarness({
+      awaitingRows: [],
+      provisionedRows: [application],
+      vendorRows: vendor ? [vendor] : [],
+    })
+    assert.equal(await app.finalize(), "reconciliation_required")
+    assert.equal(app.rpcCalls.length, 0)
+  })
+}
+
+test("application lookup failure never invokes finalization", async () => {
+  const app = helperHarness({ awaitingError: new Error("private database error") })
+  assert.equal(await app.finalize(), "service_unavailable")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("admin-client creation failure returns service_unavailable before queries or RPC", async () => {
+  const app = helperHarness({ clientCreationThrow: true })
+  assert.equal(await app.finalize(), "service_unavailable")
+  assert.equal(app.clientCreations(), 1)
+  assert.equal(app.queries.length, 0)
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("action returns stable messages and no database identifiers", async () => {
+  for (const outcome of [
+    "finalized",
+    "already_finalized",
+    "email_unconfirmed",
+    "no_pending_enrollment",
+    "identity_mismatch",
+    "vendor_collision",
+    "invalid_state",
+    "reconciliation_required",
+    "service_unavailable",
+  ]) {
+    const result = await actionHarness({ outcome }).run()
+    assert.equal(result.outcome, outcome)
+    assert.equal(typeof result.message, "string")
+    assert.ok(result.message.length > 0)
+    assert.equal(result.revision, "test-revision")
+    const serialized = JSON.stringify(result)
+    assert.equal(serialized.includes(applicationId), false)
+    assert.equal(serialized.includes(vendorId), false)
+    assert.equal(serialized.includes(userId), false)
+    assert.equal(serialized.includes(email), false)
+  }
+})
+
+test("server-only and frozen-boundary static assertions", () => {
+  assert.match(helperSource, /^import "server-only"/)
+  assert.equal(actionSource.includes("assertAdminOrigin"), false)
+  assert.equal(actionSource.includes("getSession"), false)
+  assert.equal(actionSource.includes("formData.get"), false)
+  assert.equal(actionSource.includes("_formData.get"), false)
+  assert.equal(helperSource.includes("invited_at"), false)
+  assert.equal(helperSource.includes("platform_fee_pct"), false)
+
+  const combined = `${helperSource}\n${actionSource}`
+  for (const forbidden of [
+    "inviteUserByEmail",
+    "createUser",
+    '.from("vendor_verifications")',
+    '.from("products")',
+    '.from("orders")',
+    '.from("payouts")',
+    '.from("refunds")',
+    "is_active: true",
+    "n8n",
+  ]) {
+    assert.equal(combined.includes(forbidden), false, forbidden)
+  }
+})
+
+test("only the approved files are changed by Batch 3E1", () => {
+  const expected = new Set([helperFile, actionFile, "tests/vendor-provisioning-finalization.test.mjs"])
+  for (const file of expected) assert.equal(fs.existsSync(path.join(root, file)), true)
+})
