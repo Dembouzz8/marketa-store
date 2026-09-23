@@ -9,8 +9,12 @@ import ts from "typescript"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const helperFile = "src/lib/vendor/finalization.ts"
 const actionFile = "src/app/vendor/onboarding/actions.ts"
+const pageFile = "src/app/vendor/onboarding/page.tsx"
+const formFile = "src/app/vendor/onboarding/finalization-form.tsx"
 const helperSource = fs.readFileSync(path.join(root, helperFile), "utf8")
 const actionSource = fs.readFileSync(path.join(root, actionFile), "utf8")
+const pageSource = fs.readFileSync(path.join(root, pageFile), "utf8")
+const formSource = fs.readFileSync(path.join(root, formFile), "utf8")
 
 const userId = "11111111-1111-4111-8111-111111111111"
 const otherUserId = "22222222-2222-4222-8222-222222222222"
@@ -29,6 +33,7 @@ function compile(file, mocks, globals = {}) {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ES2022,
         esModuleInterop: true,
+        jsx: ts.JsxEmit.ReactJSX,
       },
     }).outputText
     compiledCache.set(file, output)
@@ -181,6 +186,10 @@ function helperHarness(mode = {}) {
   return {
     finalize: () => compiledExports.finalizeSellerAccount({ userId, normalizedEmail: email }),
     finalizeAs: (identity) => compiledExports.finalizeSellerAccount(identity),
+    enrollmentState: () =>
+      compiledExports.getSellerEnrollmentState({ userId, normalizedEmail: email }),
+    enrollmentStateAs: (identity) =>
+      compiledExports.getSellerEnrollmentState(identity),
     queries,
     rpcCalls,
     clientCreations: () => clientCreations,
@@ -264,6 +273,181 @@ function actionHarness(mode = {}) {
     calls,
     finalizationCalls,
     counts: () => ({ serverClientCreations, getUserCalls, getSessionCalls }),
+  }
+}
+
+function jsx(type, props, key) {
+  return { type, props: props ?? {}, key }
+}
+
+function materialize(node) {
+  if (Array.isArray(node)) return node.map(materialize)
+  if (!node || typeof node !== "object") return node
+  if (typeof node.type === "function") return materialize(node.type(node.props))
+  return {
+    ...node,
+    props: {
+      ...node.props,
+      children: materialize(node.props?.children),
+    },
+  }
+}
+
+function findElements(node, predicate, found = []) {
+  if (Array.isArray(node)) {
+    for (const child of node) findElements(child, predicate, found)
+    return found
+  }
+  if (!node || typeof node !== "object") return found
+  if (predicate(node)) found.push(node)
+  findElements(node.props?.children, predicate, found)
+  return found
+}
+
+function textContent(node) {
+  if (Array.isArray(node)) return node.map(textContent).join("")
+  if (typeof node === "string" || typeof node === "number") return String(node)
+  if (!node || typeof node !== "object") return ""
+  return textContent(node.props?.children)
+}
+
+function pageHarness(mode = {}) {
+  const calls = []
+  const redirects = []
+  const enrollmentCalls = []
+  let getSessionCalls = 0
+  const user = Object.hasOwn(mode, "user")
+    ? mode.user
+    : {
+        id: userId,
+        email: "  Seller@Example.Test  ",
+        email_confirmed_at: "2026-09-23T08:00:00.000Z",
+        user_metadata: { application_id: otherApplicationId },
+      }
+  const redirectSignal = Symbol("redirect")
+  const client = {
+    auth: {
+      async getUser() {
+        calls.push("getUser")
+        return {
+          data: { user },
+          error: mode.userError ? new Error("private Auth error") : null,
+        }
+      },
+      async getSession() {
+        getSessionCalls++
+        throw new Error("getSession must not authorize onboarding")
+      },
+    },
+    from(table) {
+      calls.push(`from:${table}`)
+      const query = {
+        select(fields) {
+          calls.push(`select:${fields}`)
+          return query
+        },
+        eq(column, value) {
+          calls.push(`eq:${column}:${value}`)
+          return query
+        },
+        async maybeSingle() {
+          calls.push("maybeSingle")
+          return {
+            data: mode.vendor ?? null,
+            error: mode.vendorError ? new Error("private vendor error") : null,
+          }
+        },
+      }
+      return query
+    },
+  }
+
+  const compiledExports = compile(pageFile, {
+    "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: Symbol("Fragment") },
+    "next/link": (props) => jsx("a", props),
+    "next/navigation": {
+      redirect(destination) {
+        redirects.push(destination)
+        throw redirectSignal
+      },
+    },
+    "@/lib/supabase-server": {
+      async createSupabaseServerClient() {
+        calls.push("createSupabaseServerClient")
+        if (mode.clientThrow) throw new Error("private client error")
+        return client
+      },
+    },
+    "@/lib/vendor/finalization": {
+      async getSellerEnrollmentState(identity) {
+        calls.push("getSellerEnrollmentState")
+        enrollmentCalls.push(identity)
+        return mode.enrollmentState ?? "ready"
+      },
+      async finalizeSellerAccount() {
+        calls.push("finalizeSellerAccount")
+        throw new Error("GET must not finalize")
+      },
+    },
+    "./finalization-form": {
+      FinalizationForm: () => jsx("finalization-form", {}),
+    },
+  })
+
+  return {
+    async run() {
+      try {
+        return materialize(await compiledExports.default())
+      } catch (error) {
+        if (error === redirectSignal) return null
+        throw error
+      }
+    },
+    calls,
+    redirects,
+    enrollmentCalls,
+    getSessionCalls: () => getSessionCalls,
+  }
+}
+
+function formHarness(mode = {}) {
+  const navigations = []
+  const refreshes = []
+  const action = () => {
+    throw new Error("Server Action must not run during render")
+  }
+  const dispatch = () => {}
+  const router = {
+    replace(destination) {
+      navigations.push(destination)
+    },
+    refresh() {
+      refreshes.push(true)
+    },
+  }
+  let receivedAction
+  const compiledExports = compile(formFile, {
+    react: {
+      useActionState(serverAction, initialState) {
+        receivedAction = serverAction
+        return [mode.result ?? initialState, dispatch, mode.pending ?? false]
+      },
+      useEffect(callback) {
+        callback()
+      },
+    },
+    "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: Symbol("Fragment") },
+    "next/navigation": { useRouter: () => router },
+    "./actions": { finalizeSellerEnrollment: action },
+  })
+
+  return {
+    render: () => materialize(compiledExports.FinalizationForm()),
+    action,
+    dispatch,
+    receivedAction: () => receivedAction,
+    navigations,
+    refreshes,
   }
 }
 
@@ -390,6 +574,92 @@ for (const field of [
     ])
   })
 }
+
+test("read-only eligibility returns ready for exactly one valid awaiting candidate", async () => {
+  const app = helperHarness()
+  assert.equal(await app.enrollmentState(), "ready")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility reports no pending enrollment when no state is finalized", async () => {
+  const app = helperHarness({ awaitingRows: [], provisionedRows: [] })
+  assert.equal(await app.enrollmentState(), "no_pending_enrollment")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility proves an existing consistent finalized tuple", async () => {
+  const app = helperHarness({
+    awaitingRows: [],
+    provisionedRows: [provisionedApplication()],
+    vendorRows: [inactiveVendor()],
+  })
+  assert.equal(await app.enrollmentState(), "already_finalized")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility fails closed for ambiguous awaiting applications", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication(), awaitingApplication({ id: otherApplicationId })],
+  })
+  assert.equal(await app.enrollmentState(), "reconciliation_required")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility rejects candidate UUID mismatch", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication({ auth_user_id: otherUserId })],
+  })
+  assert.equal(await app.enrollmentState(), "identity_mismatch")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility rejects normalized email mismatch", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication({ email: "other@example.test" })],
+  })
+  assert.equal(await app.enrollmentState(), "identity_mismatch")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility rejects malformed candidate data", async () => {
+  const app = helperHarness({
+    awaitingRows: [awaitingApplication({ id: "malformed" })],
+  })
+  assert.equal(await app.enrollmentState(), "identity_mismatch")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility maps lookup failure to service_unavailable", async () => {
+  const app = helperHarness({ awaitingError: new Error("private read error") })
+  assert.equal(await app.enrollmentState(), "service_unavailable")
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility maps admin-client initialization failure safely", async () => {
+  const app = helperHarness({ clientCreationThrow: true })
+  assert.equal(await app.enrollmentState(), "service_unavailable")
+  assert.equal(app.queries.length, 0)
+  assert.equal(app.rpcCalls.length, 0)
+})
+
+test("read-only eligibility uses minimal fields, exact filters, limit two, and no RPC", async () => {
+  const app = helperHarness()
+  assert.equal(await app.enrollmentState(), "ready")
+  assert.deepEqual(JSON.parse(JSON.stringify(app.queries[0])), {
+    table: "vendor_applications",
+    fields: "id, email, status, provisioning_status, auth_user_id, vendor_id, provisioned_at",
+    filters: [
+      ["eq", "auth_user_id", userId],
+      ["eq", "status", "approved"],
+      ["eq", "provisioning_status", "awaiting_enrollment"],
+      ["is", "vendor_id", null],
+      ["is", "provisioned_at", null],
+    ],
+    limit: 2,
+  })
+  assert.equal(helperSource.includes("invited_at"), false)
+  assert.equal(app.rpcCalls.length, 0)
+})
 
 test("exactly one awaiting application reaches finalization", async () => {
   const app = helperHarness()
@@ -650,6 +920,159 @@ test("action returns stable messages and no database identifiers", async () => {
   }
 })
 
+test("signed-out onboarding redirects to the customer login return path", async () => {
+  const app = pageHarness({ user: null })
+  await app.run()
+  assert.deepEqual(app.redirects, ["/account/login?vendor_onboarding=1"])
+  assert.equal(app.calls.includes("getSellerEnrollmentState"), false)
+})
+
+test("onboarding page authorizes with getUser and passes only normalized live identity", async () => {
+  const app = pageHarness()
+  await app.run()
+  assert.equal(app.calls.filter((call) => call === "getUser").length, 1)
+  assert.equal(app.getSessionCalls(), 0)
+  assert.deepEqual(JSON.parse(JSON.stringify(app.enrollmentCalls)), [
+    { userId, normalizedEmail: email },
+  ])
+  assert.equal(pageSource.includes("user_metadata"), false)
+  assert.equal(pageSource.includes("getSession"), false)
+})
+
+test("existing vendor redirects to the dashboard before eligibility lookup", async () => {
+  const app = pageHarness({ vendor: { id: vendorId } })
+  await app.run()
+  assert.deepEqual(app.redirects, ["/vendor/dashboard"])
+  assert.equal(app.calls.includes("getSellerEnrollmentState"), false)
+})
+
+test("unconfirmed email renders a controlled state without finalization form", async () => {
+  const app = pageHarness({
+    user: { id: userId, email, email_confirmed_at: null },
+  })
+  const tree = await app.run()
+  assert.match(textContent(tree), /Confirm your account email/)
+  assert.equal(findElements(tree, (element) => element.type === "finalization-form").length, 0)
+  assert.equal(app.calls.includes("getSellerEnrollmentState"), false)
+})
+
+test("ready onboarding renders the explicit finalization form without mutating on GET", async () => {
+  const app = pageHarness({ enrollmentState: "ready" })
+  const tree = await app.run()
+  assert.equal(findElements(tree, (element) => element.type === "finalization-form").length, 1)
+  assert.equal(app.calls.includes("finalizeSellerAccount"), false)
+  assert.equal(app.calls.includes("getSellerEnrollmentState"), true)
+})
+
+for (const state of [
+  "email_unconfirmed",
+  "no_pending_enrollment",
+  "identity_mismatch",
+  "reconciliation_required",
+  "service_unavailable",
+]) {
+  test(`non-ready onboarding state ${state} never renders finalization form`, async () => {
+    const app = pageHarness({ enrollmentState: state })
+    const tree = await app.run()
+    assert.equal(findElements(tree, (element) => element.type === "finalization-form").length, 0)
+    assert.ok(textContent(tree).length > 0)
+  })
+}
+
+test("already-finalized eligibility redirects to the vendor dashboard", async () => {
+  const app = pageHarness({ enrollmentState: "already_finalized" })
+  await app.run()
+  assert.deepEqual(app.redirects, ["/vendor/dashboard"])
+})
+
+test("onboarding render exposes no database identifiers or seller email", async () => {
+  const app = pageHarness({ enrollmentState: "ready" })
+  const serialized = JSON.stringify(await app.run())
+  for (const privateValue of [applicationId, vendorId, userId, email]) {
+    assert.equal(serialized.includes(privateValue), false)
+  }
+})
+
+test("finalization form has no trusted hidden identifiers and binds the approved action", () => {
+  const app = formHarness()
+  const tree = app.render()
+  const forms = findElements(tree, (element) => element.type === "form")
+  const hiddenInputs = findElements(
+    tree,
+    (element) => element.type === "input" && element.props.type === "hidden"
+  )
+  assert.equal(forms.length, 1)
+  assert.equal(forms[0].props.action, app.dispatch)
+  assert.equal(app.receivedAction(), app.action)
+  assert.equal(hiddenInputs.length, 0)
+  for (const field of ["applicationId", "application_id", "auth_user_id", "email", "vendor_id"]) {
+    assert.equal(formSource.includes(`name=\"${field}\"`), false)
+  }
+})
+
+test("finalization form disables submission and uses controlled pending wording", () => {
+  const tree = formHarness({ pending: true }).render()
+  const button = findElements(tree, (element) => element.type === "button")[0]
+  assert.equal(button.props.disabled, true)
+  assert.equal(textContent(button), "Creating your seller account...")
+})
+
+test("finalization form uses the approved explicit button wording", () => {
+  const tree = formHarness().render()
+  const button = findElements(tree, (element) => element.type === "button")[0]
+  assert.equal(textContent(button), "Create my seller account")
+})
+
+for (const outcome of ["finalized", "already_finalized"]) {
+  test(`${outcome} replaces onboarding history with the vendor dashboard`, () => {
+    const app = formHarness({
+      result: { outcome, message: "controlled", revision: "revision" },
+    })
+    app.render()
+    assert.deepEqual(app.navigations, ["/vendor/dashboard"])
+    assert.equal(app.refreshes.length, 1)
+  })
+}
+
+for (const outcome of [
+  "identity_mismatch",
+  "vendor_collision",
+  "invalid_state",
+  "reconciliation_required",
+  "service_unavailable",
+  "invalid_request",
+  "email_unconfirmed",
+  "no_pending_enrollment",
+  "auth_required",
+]) {
+  test(`${outcome} remains on onboarding and renders the controlled action message`, () => {
+    const message = `controlled ${outcome}`
+    const app = formHarness({
+      result: { outcome, message, revision: "revision" },
+    })
+    const tree = app.render()
+    assert.deepEqual(app.navigations, [])
+    assert.match(textContent(tree), new RegExp(message))
+  })
+}
+
+test("initial finalization-form render cannot invoke finalization or navigate", () => {
+  const app = formHarness()
+  app.render()
+  assert.equal(app.receivedAction(), app.action)
+  assert.deepEqual(app.navigations, [])
+})
+
+test("seller consent wording preserves inactive, activation, verification, and purchase boundaries", () => {
+  assert.match(pageSource, /store begins inactive/i)
+  assert.match(pageSource, /activation happens separately/i)
+  assert.match(pageSource, /verification happens separately/i)
+  assert.match(pageSource, /not eligible for normal marketplace purchase until your[\s\S]*store is activated/i)
+  assert.equal(pageSource.includes("store is active"), false)
+  assert.equal(pageSource.includes("seller is verified"), false)
+  assert.equal(pageSource.includes("immediately available for sale"), false)
+})
+
 test("server-only and frozen-boundary static assertions", () => {
   assert.match(helperSource, /^import "server-only"/)
   assert.equal(actionSource.includes("assertAdminOrigin"), false)
@@ -658,8 +1081,12 @@ test("server-only and frozen-boundary static assertions", () => {
   assert.equal(actionSource.includes("_formData.get"), false)
   assert.equal(helperSource.includes("invited_at"), false)
   assert.equal(helperSource.includes("platform_fee_pct"), false)
+  assert.equal(pageSource.includes("finalizeSellerAccount"), false)
+  assert.equal(pageSource.includes("finalize_vendor_application_provisioning"), false)
+  assert.equal(formSource.includes("finalize_vendor_application_provisioning"), false)
+  assert.match(formSource, /finalizeSellerEnrollment/)
 
-  const combined = `${helperSource}\n${actionSource}`
+  const combined = `${helperSource}\n${actionSource}\n${pageSource}\n${formSource}`
   for (const forbidden of [
     "inviteUserByEmail",
     "createUser",
@@ -675,7 +1102,13 @@ test("server-only and frozen-boundary static assertions", () => {
   }
 })
 
-test("only the approved files are changed by Batch 3E1", () => {
-  const expected = new Set([helperFile, actionFile, "tests/vendor-provisioning-finalization.test.mjs"])
+test("all approved Batch 3E2 files exist", () => {
+  const expected = new Set([
+    helperFile,
+    actionFile,
+    pageFile,
+    formFile,
+    "tests/vendor-provisioning-finalization.test.mjs",
+  ])
   for (const file of expected) assert.equal(fs.existsSync(path.join(root, file)), true)
 })

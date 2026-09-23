@@ -43,6 +43,15 @@ export type SellerFinalizationOutcome =
   | "reconciliation_required"
   | "service_unavailable"
 
+export type SellerEnrollmentState =
+  | "ready"
+  | "already_finalized"
+  | "email_unconfirmed"
+  | "no_pending_enrollment"
+  | "identity_mismatch"
+  | "reconciliation_required"
+  | "service_unavailable"
+
 export type VerifiedSellerIdentity = {
   userId: string
   normalizedEmail: string
@@ -70,6 +79,16 @@ type ReconciliationOutcome =
   | "not_finalized"
   | "reconciliation_required"
   | "service_unavailable"
+
+type CandidateLookup =
+  | { outcome: "candidate"; application: ApplicationRow }
+  | {
+      outcome:
+        | "none"
+        | "identity_mismatch"
+        | "reconciliation_required"
+        | "service_unavailable"
+    }
 
 function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value)
@@ -116,6 +135,42 @@ function isValidCandidate(
     candidate.vendor_id === null &&
     candidate.provisioned_at === null
   )
+}
+
+async function readAwaitingCandidate(
+  client: ReturnType<typeof createAdminClient>,
+  identity: VerifiedSellerIdentity
+): Promise<CandidateLookup> {
+  let candidatesResult
+  try {
+    candidatesResult = await client
+      .from("vendor_applications")
+      .select(APPLICATION_FIELDS)
+      .eq("auth_user_id", identity.userId)
+      .eq("status", "approved")
+      .eq("provisioning_status", "awaiting_enrollment")
+      .is("vendor_id", null)
+      .is("provisioned_at", null)
+      .limit(2)
+  } catch {
+    return { outcome: "service_unavailable" }
+  }
+
+  if (candidatesResult.error) return { outcome: "service_unavailable" }
+  if (!Array.isArray(candidatesResult.data)) {
+    return { outcome: "reconciliation_required" }
+  }
+  if (candidatesResult.data.length > 1) {
+    return { outcome: "reconciliation_required" }
+  }
+  if (candidatesResult.data.length === 0) return { outcome: "none" }
+
+  const candidate = candidatesResult.data[0]
+  if (!isApplicationRow(candidate) || !isValidCandidate(candidate, identity)) {
+    return { outcome: "identity_mismatch" }
+  }
+
+  return { outcome: "candidate", application: candidate }
 }
 
 function parseRpcOutcome(
@@ -259,6 +314,30 @@ async function reconcileFinalizedState(
     : "reconciliation_required"
 }
 
+export async function getSellerEnrollmentState(
+  identity: VerifiedSellerIdentity
+): Promise<SellerEnrollmentState> {
+  if (!isUuid(identity.userId) || !identity.normalizedEmail) {
+    return "identity_mismatch"
+  }
+
+  let client: ReturnType<typeof createAdminClient>
+  try {
+    client = createAdminClient()
+  } catch {
+    return "service_unavailable"
+  }
+
+  const candidateLookup = await readAwaitingCandidate(client, identity)
+  if (candidateLookup.outcome === "candidate") return "ready"
+  if (candidateLookup.outcome !== "none") return candidateLookup.outcome
+
+  const reconciliation = await reconcileFinalizedState(client, identity)
+  if (reconciliation === "already_finalized") return reconciliation
+  if (reconciliation === "not_finalized") return "no_pending_enrollment"
+  return reconciliation
+}
+
 export async function finalizeSellerAccount(
   identity: VerifiedSellerIdentity
 ): Promise<SellerFinalizationOutcome> {
@@ -272,39 +351,17 @@ export async function finalizeSellerAccount(
   } catch {
     return "service_unavailable"
   }
-  let candidatesResult
-  try {
-    candidatesResult = await client
-      .from("vendor_applications")
-      .select(APPLICATION_FIELDS)
-      .eq("auth_user_id", identity.userId)
-      .eq("status", "approved")
-      .eq("provisioning_status", "awaiting_enrollment")
-      .is("vendor_id", null)
-      .is("provisioned_at", null)
-      .limit(2)
-  } catch {
-    return "service_unavailable"
-  }
-
-  if (candidatesResult.error) return "service_unavailable"
-  if (!Array.isArray(candidatesResult.data)) {
-    return "reconciliation_required"
-  }
-  if (candidatesResult.data.length > 1) {
-    return "reconciliation_required"
-  }
-  if (candidatesResult.data.length === 0) {
+  const candidateLookup = await readAwaitingCandidate(client, identity)
+  if (candidateLookup.outcome === "none") {
     const reconciliation = await reconcileFinalizedState(client, identity)
     if (reconciliation === "already_finalized") return reconciliation
     if (reconciliation === "not_finalized") return "no_pending_enrollment"
     return reconciliation
   }
-
-  const candidate = candidatesResult.data[0]
-  if (!isApplicationRow(candidate) || !isValidCandidate(candidate, identity)) {
-    return "identity_mismatch"
+  if (candidateLookup.outcome !== "candidate") {
+    return candidateLookup.outcome
   }
+  const candidate = candidateLookup.application
 
   let rpcResult
   try {
