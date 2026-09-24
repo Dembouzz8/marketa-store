@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { createBrowserClient } from "@supabase/ssr"
 import { Eye, EyeOff, Loader2, Lock, Mail, ShoppingBag } from "lucide-react"
 import { useState } from "react"
@@ -25,18 +26,23 @@ export default function VendorLoginPage() {
     setIsLoading(true)
     setError(null)
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (signInError) {
-      setError(signInError.message)
+      if (signInError) {
+        setError("We couldn't sign you in. Check your email and password and try again.")
+        return
+      }
+
+      window.location.href = "/vendor/dashboard"
+    } catch {
+      setError("We couldn't sign you in right now. Please try again.")
+    } finally {
       setIsLoading(false)
-      return
     }
-
-    window.location.href = "/vendor/dashboard"
   }
 
   return (
@@ -70,8 +76,14 @@ export default function VendorLoginPage() {
           </label>
 
           <label className="block">
-            <span className="mb-2 block text-sm font-medium text-zinc-700">
-              Password
+            <span className="mb-2 flex items-center justify-between gap-4 text-sm font-medium text-zinc-700">
+              <span>Password</span>
+              <Link
+                href="/account/password/forgot"
+                className="font-semibold text-amber-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+              >
+                Forgot password?
+              </Link>
             </span>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />

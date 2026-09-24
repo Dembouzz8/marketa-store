@@ -158,7 +158,15 @@ function CustomerLoginForm() {
             </div>
 
             <div>
-              <Label htmlFor="customer-login-password">Password</Label>
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="customer-login-password">Password</Label>
+                <Link
+                  href="/account/password/forgot"
+                  className="text-sm font-semibold text-amber-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <div className="relative">
                 <LockKeyhole
                   className="pointer-events-none absolute left-3 top-1/2 mt-1 size-4 -translate-y-1/2 text-zinc-400"

@@ -69,8 +69,19 @@ export async function proxy(request: NextRequest) {
   const isAccountAuthPage =
     path === "/account/login" || path === "/account/register"
   const isAccountCallback = path === "/account/auth/callback"
+  const isPasswordRecoveryRequest = path === "/account/password/forgot"
+  const isPasswordRecoveryCallback = path === "/account/auth/recovery"
+  const isPasswordRecoveryConfirm =
+    path === "/account/auth/recovery/confirm"
+  const isPublicPasswordRecoveryRoute =
+    isPasswordRecoveryRequest ||
+    isPasswordRecoveryCallback ||
+    isPasswordRecoveryConfirm
   const isProtectedAccountRoute =
-    isAccountRoute && !isAccountAuthPage && !isAccountCallback
+    isAccountRoute &&
+    !isAccountAuthPage &&
+    !isAccountCallback &&
+    !isPublicPasswordRecoveryRoute
 
   if (isVendorRoute && !isVendorLoginPage && !isVendorCallback && !isVendorConfirm && !user) {
     const redirect = redirectWithCookies(
@@ -105,13 +116,19 @@ export async function proxy(request: NextRequest) {
     return redirectWithCookies(request, response, "/account")
   }
 
-  if (isVendorCallback || isVendorConfirm || isVendorOnboarding) {
+  if (
+    isVendorCallback ||
+    isVendorConfirm ||
+    isVendorOnboarding ||
+    isPasswordRecoveryCallback ||
+    isPasswordRecoveryConfirm
+  ) {
     response.headers.set("Cache-Control", "private, no-store")
   }
-  if (isVendorCallback) {
+  if (isVendorCallback || isPasswordRecoveryCallback) {
     response.headers.set("Referrer-Policy", "no-referrer")
   }
-  if (isVendorConfirm) {
+  if (isVendorConfirm || isPasswordRecoveryConfirm) {
     response.headers.set("Referrer-Policy", "same-origin")
   }
 

@@ -15,7 +15,11 @@ type PasswordErrors = Partial<
   Record<"password" | "confirmPassword" | "form", string>
 >
 
-export function PasswordForm() {
+type PasswordFormProps = {
+  mode?: "setup" | "recovery"
+}
+
+export function PasswordForm({ mode = "setup" }: PasswordFormProps = {}) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -144,19 +148,35 @@ export function PasswordForm() {
         <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-900">
           <p className="flex items-center gap-2 font-semibold">
             <CheckCircle2 className="size-5" aria-hidden="true" />
-            Your Marketa password has been set.
+            {mode === "recovery"
+              ? "Your Marketa password has been reset."
+              : "Your Marketa password has been set."}
           </p>
           <p className="mt-2 leading-6">
             You can use it for both customer and seller sign-in.
           </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <Link href="/vendor/dashboard" className="font-semibold underline underline-offset-4">
-              Seller dashboard
-            </Link>
-            <Link href="/" className="font-semibold underline underline-offset-4">
-              Marketa home
-            </Link>
-          </div>
+          {mode === "recovery" ? (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Link href="/account/login" className="font-semibold underline underline-offset-4">
+                Customer login
+              </Link>
+              <Link href="/vendor/login" className="font-semibold underline underline-offset-4">
+                Seller login
+              </Link>
+              <Link href="/" className="font-semibold underline underline-offset-4">
+                Marketa home
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Link href="/vendor/dashboard" className="font-semibold underline underline-offset-4">
+                Seller dashboard
+              </Link>
+              <Link href="/" className="font-semibold underline underline-offset-4">
+                Marketa home
+              </Link>
+            </div>
+          )}
         </div>
       )}
 
@@ -171,7 +191,7 @@ export function PasswordForm() {
             Setting password...
           </>
         ) : (
-          "Set password"
+          mode === "recovery" ? "Reset password" : "Set password"
         )}
       </Button>
     </form>
