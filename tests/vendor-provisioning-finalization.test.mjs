@@ -11,10 +11,15 @@ const helperFile = "src/lib/vendor/finalization.ts"
 const actionFile = "src/app/vendor/onboarding/actions.ts"
 const pageFile = "src/app/vendor/onboarding/page.tsx"
 const formFile = "src/app/vendor/onboarding/finalization-form.tsx"
+const inviteCallbackFile = "src/app/vendor/auth/callback/route.ts"
 const helperSource = fs.readFileSync(path.join(root, helperFile), "utf8")
 const actionSource = fs.readFileSync(path.join(root, actionFile), "utf8")
 const pageSource = fs.readFileSync(path.join(root, pageFile), "utf8")
 const formSource = fs.readFileSync(path.join(root, formFile), "utf8")
+const inviteCallbackSource = fs.readFileSync(
+  path.join(root, inviteCallbackFile),
+  "utf8"
+)
 
 const userId = "11111111-1111-4111-8111-111111111111"
 const otherUserId = "22222222-2222-4222-8222-222222222222"
@@ -1024,12 +1029,12 @@ test("finalization form uses the approved explicit button wording", () => {
 })
 
 for (const outcome of ["finalized", "already_finalized"]) {
-  test(`${outcome} replaces onboarding history with the vendor dashboard`, () => {
+  test(`${outcome} replaces onboarding history with the account password prompt`, () => {
     const app = formHarness({
       result: { outcome, message: "controlled", revision: "revision" },
     })
     app.render()
-    assert.deepEqual(app.navigations, ["/vendor/dashboard"])
+    assert.deepEqual(app.navigations, ["/account/security/password"])
     assert.equal(app.refreshes.length, 1)
   })
 }
@@ -1063,6 +1068,16 @@ test("initial finalization-form render cannot invoke finalization or navigate", 
   assert.deepEqual(app.navigations, [])
 })
 
+test("password-like form input is ignored by the unchanged finalization action", async () => {
+  const app = actionHarness()
+  const formData = new FormData()
+  formData.set("password", "not-a-real-credential")
+  assert.equal((await app.run(formData)).outcome, "finalized")
+  assert.deepEqual(JSON.parse(JSON.stringify(app.finalizationCalls)), [
+    { userId, normalizedEmail: email },
+  ])
+})
+
 test("seller consent wording preserves inactive, activation, verification, and purchase boundaries", () => {
   assert.match(pageSource, /store begins inactive/i)
   assert.match(pageSource, /activation happens separately/i)
@@ -1085,6 +1100,11 @@ test("server-only and frozen-boundary static assertions", () => {
   assert.equal(pageSource.includes("finalize_vendor_application_provisioning"), false)
   assert.equal(formSource.includes("finalize_vendor_application_provisioning"), false)
   assert.match(formSource, /finalizeSellerEnrollment/)
+  assert.match(formSource, /router\.replace\("\/account\/security\/password"\)/)
+  assert.equal(actionSource.includes("password"), false)
+  assert.equal(helperSource.includes("password"), false)
+  assert.equal(inviteCallbackSource.includes("/account/security/password"), false)
+  assert.equal(inviteCallbackSource.includes("updateUser"), false)
 
   const combined = `${helperSource}\n${actionSource}\n${pageSource}\n${formSource}`
   for (const forbidden of [
@@ -1108,6 +1128,7 @@ test("all approved Batch 3E2 files exist", () => {
     actionFile,
     pageFile,
     formFile,
+    inviteCallbackFile,
     "tests/vendor-provisioning-finalization.test.mjs",
   ])
   for (const file of expected) assert.equal(fs.existsSync(path.join(root, file)), true)

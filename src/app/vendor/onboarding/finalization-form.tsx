@@ -26,7 +26,7 @@ export function FinalizationForm() {
       result.revision &&
       (result.outcome === "finalized" || result.outcome === "already_finalized")
     ) {
-      router.replace("/vendor/dashboard")
+      router.replace("/account/security/password")
       router.refresh()
     }
   }, [result.outcome, result.revision, router])
