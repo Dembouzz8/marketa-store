@@ -30,6 +30,18 @@ const categories = [
   "Others",
 ]
 
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+
+const imageExtensions = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+} as const
+
+function getImageExtension(mimeType: string) {
+  return imageExtensions[mimeType as keyof typeof imageExtensions] ?? null
+}
+
 export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) {
   const [name, setName] = useState(product?.name ?? "")
   const [description, setDescription] = useState(product?.description ?? "")
@@ -77,14 +89,20 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
-    const allowedFiles = files.filter((file) =>
-      ["image/jpeg", "image/png", "image/webp"].includes(file.type)
-    )
+    const allowedFiles = files.filter((file) => getImageExtension(file.type))
 
     if (allowedFiles.length !== files.length) {
       setErrors((current) => ({
         ...current,
         images: "Only JPEG, PNG, and WebP images are supported.",
+      }))
+      return
+    }
+
+    if (allowedFiles.some((file) => file.size > MAX_IMAGE_SIZE_BYTES)) {
+      setErrors((current) => ({
+        ...current,
+        images: "Each image must be 5 MiB or smaller.",
       }))
       return
     }
@@ -104,7 +122,10 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
   const uploadImages = async () => {
     return await Promise.all(
       selectedFiles.map(async (file) => {
-        const path = `${vendorId}/${Date.now()}-${file.name}`
+        const extension = getImageExtension(file.type)
+        if (!extension) throw new Error("Unsupported image type.")
+
+        const path = `${vendorId}/${crypto.randomUUID()}.${extension}`
         const { error } = await supabase.storage
           .from("product-images")
           .upload(path, file)

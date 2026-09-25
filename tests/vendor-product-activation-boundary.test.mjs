@@ -480,6 +480,8 @@ test("Batch 4A working-tree scope excludes frozen systems", () => {
     productsTableFile,
     dashboardFile,
     "tests/vendor-product-activation-boundary.test.mjs",
+    "supabase/migrations/20260925160000_harden_product_image_storage_write_boundary.sql",
+    "tests/vendor-product-image-storage-boundary.test.mjs",
   ])
   for (const file of changed) {
     assert.ok(allowed.has(file), `Unexpected Batch 4A file: ${file}`)
