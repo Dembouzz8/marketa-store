@@ -355,6 +355,11 @@ implemented customer routes are:
 - `/account/orders`
 - `/account/addresses`
 - `/account/auth/callback`
+- `/account/security/password`
+- `/account/password/forgot`
+- `/account/auth/recovery`
+- `/account/auth/recovery/confirm`
+- `/account/password/reset`
 
 Customer profile data is stored in `public.customer_profiles`, separately from
 Auth metadata. A complete checkout profile requires `full_name` and `phone`.
@@ -440,6 +445,43 @@ Customer account UX remains separate from vendor login and dashboard UX. A
 customer session alone does not grant vendor dashboard access; vendor access
 continues through `/vendor/login` and the vendor authorization model.
 
+### Shared customer and seller authentication
+
+Marketa uses one Supabase Auth UUID for a person's customer access and optional
+vendor ownership. The Auth identity, customer profile, vendor row, vendor
+verification, and vendor activation are distinct records or states. Seller
+enrollment does not create a second Auth user or a separate vendor password.
+
+After successful seller-owned finalization, newly invited sellers who do not
+already know a password are automatically routed to
+`/account/security/password`. Existing customers whose confirmed email is
+reused keep their existing Auth identity and password and may skip changing
+it. Password setup runs in the browser with `auth.updateUser({ password })`;
+service-role and Auth Admin authority do not handle the password.
+
+Both customer and vendor login link to `/account/password/forgot`. Shared
+scanner-safe recovery uses this flow:
+
+`/account/password/forgot -> resetPasswordForEmail() -> Recovery email`
+`-> GET /account/auth/recovery -> transient HttpOnly recovery cookie`
+`-> token-free confirmation page -> explicit POST`
+`-> verifyOtp({ token_hash, type: "recovery" })`
+`-> validated session -> /account/password/reset`
+`-> updateUser({ password })`
+
+Recovery GET does not consume the OTP. The recovery-specific cookie is
+HttpOnly, `SameSite=Lax`, Secure in production, short-lived, and scoped to the
+recovery flow. Malformed and expired links fail through controlled token-free
+output, and the request UI does not disclose whether an account exists.
+
+`MARKETA_SITE_URL` is the server-only authority used to construct the recovery
+redirect. Its current production value, `https://marketa-store.vercel.app`, is
+temporary until Marketa adopts a custom domain. A domain change must also
+update the relevant Supabase Site URL, recovery allow-list, seller invitation
+callback/origin settings, and public Auth-email links. The hosted Recovery
+template builds its scanner-safe link from `{{ .RedirectTo }}` and
+`{{ .TokenHash }}`.
+
 ---
 
 ## 12. Implementation phases
@@ -488,24 +530,41 @@ reviewer identity is derived from the authenticated admin session. Approval
 leaves `status = approved` and `provisioning_status = not_started`. It does not
 provision an Auth identity, create or activate a vendor, or verify one.
 
-The following remain outside the completed Phase 3 MVP scope:
+Vendor provisioning and shared Auth are production validated through Batch
+3F2:
 
-- Vendor logo and storage support is a deferred enhancement.
-- Automatic Auth user or vendor provisioning is not implemented.
-- Payment and paid-order outbox redesign remains separately deferred and frozen.
+- Batches 3A–3D provide application-scoped identity resolution, scanner-safe
+  invitation acceptance, controlled admin initiation, Auth identity recording,
+  and the `awaiting_enrollment` boundary.
+- Batch 3E requires explicit authenticated owner action to finalize. The server
+  derives the Auth UUID and confirmed normalized email and derives the
+  application without trusting a client-supplied application ID. The existing
+  privileged database authority creates the vendor inactive and moves the
+  application to `provisioned`.
+- Batch 3F1 automatically routes newly invited sellers to shared Marketa
+  password setup after finalization. Existing customers reuse their Auth
+  identity and password.
+- Batch 3F2 provides shared scanner-safe password recovery for customer and
+  seller login.
 
-Batch 3 is in progress. Vendor Provisioning Batch 3A is complete: its applied,
-service-role-only `resolve_vendor_application_auth_identity(uuid)` function
-resolves Auth identity state for an application without changing application,
-vendor, or Auth data. It does not claim provisioning, invite or create Auth
-users, record application Auth identity, create vendors, finalize provisioning,
-activate vendors, or verify vendors. Batch 3B is complete and deployed: vendor
-Auth callback, informational onboarding landing, fixed customer-login return,
-and narrow proxy routing. The Batch 3C production Auth audit is complete.
-Batch 3C1 is committed on main: invite acceptance requires an explicit POST
-from a token-free confirmation page. Its deployment status was not rechecked
-in the vendor logout hotfix, and no real invitations have been sent.
-Provisioning initiation, invitation, and finalization remain unimplemented.
+Production validation proved seller finalization, password setup, seller
+logout/login, recovery-email delivery, token-free explicit confirmation,
+replacement-password setup, and both seller and customer login with the same
+replacement password. The application remained approved and provisioned; the
+vendor remained inactive, with zero verification rows.
+
+Approval, provisioning, activation, and verification remain separate. Vendor
+logo/storage support and payment/paid-order outbox redesign remain deferred.
+
+### Next security-hardening work: activation boundary
+
+Inactive vendors can currently reach product-management surfaces. Public
+product-read RLS relies on product active state without necessarily requiring
+the owning vendor itself to be active. Storefront UI behavior may hide inactive
+vendors, but direct Data API/RLS access requires its own audit and hardening.
+Checkout already rejects inactive vendors; that is not a substitute for
+product-management and read-policy enforcement. Review new-product defaults
+and vendor-dashboard wording in the same future batch.
 
 ### Phase 4 — Customer experience
 
@@ -527,8 +586,8 @@ Deferred Phase 4 enhancements:
 
 Separate existing backlogs remain outside Phase 4 and are not Phase 4
 blockers: payment/outbox hardening, refunds, payout scheduling, stock decrement
-redesign, vendor portal/security cleanup, and seller-application
-provisioning/onboarding tooling.
+redesign, the activation-boundary security work above, and other separately
+authorized vendor portal cleanup.
 
 ---
 

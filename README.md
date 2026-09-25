@@ -28,6 +28,7 @@ Create `.env.local` in the project root:
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL=https://your-project.supabase.co/functions/v1/handle-checkout
+MARKETA_SITE_URL=https://your-explicit-development-origin.example
 ```
 
 Run the development server:
@@ -46,7 +47,17 @@ npm run build
 
 - `NEXT_PUBLIC_SUPABASE_URL`: Find this in Supabase under Project Settings > API > Project URL.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Find this in Supabase under Project Settings > API > Project API keys > anon public.
-- `NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL`: Use the public URL of the Supabase `handle-checkout` Edge Function. That function validates the current order data, creates the pending order, initializes the Paystack transaction, and returns `authorization_url`.
+- `NEXT_PUBLIC_CHECKOUT_WEBHOOK_URL`: Use the public URL of the Supabase
+  `handle-checkout` Edge Function. That function validates the current order
+  data, creates the pending order, initializes the Paystack transaction, and
+  returns `authorization_url`.
+- `MARKETA_SITE_URL`: Required server-only authoritative origin used to build
+  password-recovery redirects. The current production value is the temporary
+  Vercel origin `https://marketa-store.vercel.app`. For local or development
+  use, set an explicitly chosen HTTPS origin appropriate to that environment
+  and configure the corresponding Supabase Auth URLs. The application does not
+  infer this value from request or forwarded-host data and fails closed when
+  the value is missing or invalid.
 
 Configure Paystack's webhook URL to point to the Supabase
 `paystack-webhook` Edge Function. That webhook is the server-side payment
@@ -72,10 +83,11 @@ supports both sign-in and account creation.
 
 Customer account routes include `/account`, `/account/login`,
 `/account/register`, `/account/profile`, `/account/orders`,
-`/account/addresses` and `/account/auth/callback`. Registration uses email and
-password. Checkout identity is not accepted from browser form fields: email
-comes from the verified Auth user, while required full name and phone values
-come from the separate `public.customer_profiles` table.
+`/account/addresses`, `/account/auth/callback`, shared password setup and
+shared password recovery. Registration uses email and password. Checkout
+identity is not accepted from browser form fields: email comes from the
+verified Auth user, while required full name and phone values come from the
+separate `public.customer_profiles` table.
 
 Authenticated checkout sends a Bearer access token plus a checkout attempt,
 product IDs and quantities, and a shipping-address snapshot.
@@ -103,6 +115,28 @@ changed carts and unrelated or newly added items.
 Customer account UX is separate from the vendor login and dashboard. A
 customer session by itself does not grant vendor dashboard access.
 
+### Shared customer and seller identity
+
+Marketa uses one Supabase Auth identity for customer and seller access. An
+Auth user may own a vendor without creating a second Auth user, and the
+password belongs to that shared Marketa account.
+
+After an invited seller explicitly finalizes enrollment, a seller who does
+not already know a password is automatically routed to
+`/account/security/password`. Password setup uses the browser session and
+`auth.updateUser({ password })`; it does not use service-role or Auth Admin
+authority. Existing customers whose confirmed email is reused keep their
+existing identity and password and may skip password setup.
+
+Both `/account/login` and `/vendor/login` link to the shared public recovery
+page at `/account/password/forgot`. The scanner-safe recovery flow stores the
+email token briefly in a recovery-specific HttpOnly, `SameSite=Lax` cookie,
+removes it from the URL, and waits for an explicit POST from the token-free
+confirmation page before calling
+`verifyOtp({ token_hash, type: "recovery" })`. The protected reset page updates
+the shared password with `auth.updateUser({ password })`. Recovery responses
+do not disclose whether an account exists or expose raw provider errors.
+
 ## Public Vendors and Seller Applications
 
 - `/vendors` lists active sellers from the `public_active_vendors` view.
@@ -121,33 +155,59 @@ customer session by itself does not grant vendor dashboard access.
   start review, approve, or reject. Admin membership is checked privately on
   the server, and reviewer identity comes from the authenticated admin session.
 - Approval leaves `status = approved` and `provisioning_status = not_started`.
-  It does not provision an Auth identity, create or activate a vendor, or
-  verify one. Vendor Provisioning Batch 3A is complete: the applied,
-  service-role-only `resolve_vendor_application_auth_identity(uuid)` function
-  reads an application's Auth identity state without changing application,
-  vendor, or Auth data. Batch 3B is complete and deployed: it added the vendor
-  invite callback, informational onboarding landing, fixed customer-login
-  return, and narrow proxy routing. The Batch 3C production Auth audit is
-  complete. Batch 3C1 is committed on main: it makes invite acceptance require
-  an explicit POST from a token-free confirmation page. Its deployment status
-  was not rechecked in the vendor logout hotfix. No real invitations have been
-  sent. Batch 3 overall remains in progress. Provisioning initiation,
-  invitation, identity recording, vendor creation, activation, verification,
-  and finalization are not implemented.
+  It does not itself create an Auth identity or vendor and does not activate or
+  verify a vendor.
+- Provisioning initiation is deployed and production validated. An authorized
+  admin starts enrollment; the server resolves or invites the application
+  email, records the Auth UUID, and stops at `awaiting_enrollment`.
+- Invite acceptance is scanner-safe and requires an explicit POST from a
+  token-free confirmation page. Invitation acceptance establishes the shared
+  Auth session but does not create the vendor.
+- Seller-owned finalization requires explicit action by the authenticated
+  owner. The server derives the Auth UUID and confirmed normalized email,
+  derives the application without trusting a client application ID, and calls
+  the existing privileged database finalization authority.
+- Successful finalization links the application and creates an inactive
+  vendor with `provisioning_status = provisioned`. It does not activate or
+  verify the vendor and creates no `vendor_verifications` row.
+- Production validation proved an application at `approved/provisioned`, an
+  inactive vendor, and zero verification rows. Shared password setup and
+  customer/seller password recovery were also production validated without
+  changing that application or vendor state.
 
 Vendor logo and storage support remains a deferred enhancement. Payment and
 paid-order outbox redesign remains separately deferred and frozen.
 
 ## Vendor Portal
 
-The vendor dashboard is available at `/vendor/login`. Authenticated vendor users are redirected to `/vendor/dashboard`, while unauthenticated visitors are sent back to the login page.
+The vendor dashboard is available at `/vendor/login`. Authenticated vendor
+owners are redirected to `/vendor/dashboard`, while unauthenticated visitors
+are sent to the login page.
 
-To create a vendor account:
+The intended new-seller journey is:
 
-1. In Supabase, open Authentication > Users and create a user with an email and password.
-2. Copy the new auth user ID.
-3. Insert a matching row into the `vendors` table where `user_id` is the auth user ID.
-4. Sign in at `/vendor/login` with that email and password.
+`application -> approval -> enrollment invitation -> explicit invite`
+`confirmation -> onboarding -> seller-account finalization -> password setup`
+`-> seller dashboard`
+
+The finalization step creates the vendor inactive. Activation and verification
+remain separate administrative stages.
+
+### Deferred activation-boundary hardening
+
+Inactive vendors can currently reach product-management surfaces. Public
+product-read RLS relies on product active state without necessarily requiring
+the owning vendor itself to be active. Storefront UI behavior may hide an
+inactive vendor, and checkout rejects inactive vendors, but neither replaces a
+direct Data API/RLS audit. A dedicated security batch must harden product
+management and product-read policies and review new-product defaults and
+vendor-dashboard wording.
+
+When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
+Supabase Site URL and recovery redirect settings, seller invitation
+callback/origin configuration, and public Auth-email links. The hosted
+Recovery template uses `{{ .RedirectTo }}` and `{{ .TokenHash }}` to construct
+the scanner-safe Marketa recovery link.
 
 ## Seed Test Data in Supabase
 
