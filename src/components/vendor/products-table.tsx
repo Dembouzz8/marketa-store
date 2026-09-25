@@ -23,8 +23,9 @@ type ActionResult = {
   error: string | null
 }
 
-interface ProductsTableProps {
+interface ManageableProductsTableProps {
   products: Product[]
+  canManage: true
   onDelete: (productId: string) => Promise<ActionResult>
   onToggleActive: (
     productId: string,
@@ -32,8 +33,20 @@ interface ProductsTableProps {
   ) => Promise<ActionResult>
 }
 
+interface ReadOnlyProductsTableProps {
+  products: Product[]
+  canManage: false
+  onDelete?: never
+  onToggleActive?: never
+}
+
+type ProductsTableProps =
+  | ManageableProductsTableProps
+  | ReadOnlyProductsTableProps
+
 export function ProductsTable({
   products,
+  canManage,
   onDelete,
   onToggleActive,
 }: ProductsTableProps) {
@@ -58,6 +71,8 @@ export function ProductsTable({
   }, [localProducts, query])
 
   const handleToggleActive = (product: Product) => {
+    if (!canManage || !onToggleActive) return
+
     const nextActive = !product.is_active
     setLocalProducts((items) =>
       items.map((item) =>
@@ -85,7 +100,7 @@ export function ProductsTable({
   }
 
   const handleDelete = () => {
-    if (!deleteTarget) return
+    if (!canManage || !onDelete || !deleteTarget) return
 
     const product = deleteTarget
     startTransition(async () => {
@@ -106,6 +121,8 @@ export function ProductsTable({
   }
 
   const handleStockSave = async (product: Product) => {
+    if (!canManage) return
+
     const nextStock = Number(stockDraft)
     setEditingStockId(null)
 
@@ -152,13 +169,15 @@ export function ProductsTable({
             className="h-10 rounded-lg border-zinc-200 pl-10"
           />
         </div>
-        <Link
-          href="/vendor/products/new"
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 text-sm font-semibold text-zinc-900 transition-colors hover:bg-amber-400"
-        >
-          <Plus className="size-4" />
-          Add Product
-        </Link>
+        {canManage && (
+          <Link
+            href="/vendor/products/new"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 text-sm font-semibold text-zinc-900 transition-colors hover:bg-amber-400"
+          >
+            <Plus className="size-4" />
+            Add Product
+          </Link>
+        )}
       </div>
 
       {filteredProducts.length === 0 ? (
@@ -168,7 +187,9 @@ export function ProductsTable({
             No products yet
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Add your first product to start selling.
+            {canManage
+              ? "Add your first product to start selling."
+              : "There are no products to review yet."}
           </p>
         </div>
       ) : (
@@ -218,7 +239,7 @@ export function ProductsTable({
                     {formatNaira(product.price)}
                   </td>
                   <td className="px-3 py-4">
-                    {editingStockId === product.id ? (
+                    {canManage && editingStockId === product.id ? (
                       <Input
                         type="number"
                         value={stockDraft}
@@ -236,63 +257,86 @@ export function ProductsTable({
                         }}
                         className="h-8 w-20 rounded-lg border-zinc-200"
                       />
-                    ) : (
+                    ) : canManage ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingStockId(product.id)
+                            setStockDraft(String(product.stock))
+                          }}
+                          className={cn(
+                            "text-sm font-semibold",
+                            product.stock < 5
+                              ? "text-red-600"
+                              : "text-emerald-600"
+                          )}
+                        >
+                          {product.stock}
+                        </button>
+                      ) : (
+                        <span
+                          className={cn(
+                            "text-sm font-semibold",
+                            product.stock < 5
+                              ? "text-red-600"
+                              : "text-emerald-600"
+                          )}
+                        >
+                          {product.stock}
+                        </span>
+                      )}
+                  </td>
+                  <td className="px-3 py-4">
+                    {canManage ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          setEditingStockId(product.id)
-                          setStockDraft(String(product.stock))
-                        }}
+                        disabled={isPending}
+                        onClick={() => handleToggleActive(product)}
                         className={cn(
-                          "text-sm font-semibold",
-                          product.stock < 5
-                            ? "text-red-600"
-                            : "text-emerald-600"
+                          "relative h-6 w-11 rounded-full transition-colors",
+                          product.is_active ? "bg-emerald-500" : "bg-zinc-300"
                         )}
+                        aria-label="Toggle product status"
                       >
-                        {product.stock}
+                        <span
+                          className={cn(
+                            "absolute top-1 size-4 rounded-full bg-white transition-transform",
+                            product.is_active
+                              ? "translate-x-5"
+                              : "translate-x-1"
+                          )}
+                        />
                       </button>
+                    ) : (
+                      <span className="text-xs font-medium text-zinc-600">
+                        {product.is_active ? "Active" : "Inactive"}
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-4">
-                    <button
-                      type="button"
-                      disabled={isPending}
-                      onClick={() => handleToggleActive(product)}
-                      className={cn(
-                        "relative h-6 w-11 rounded-full transition-colors",
-                        product.is_active ? "bg-emerald-500" : "bg-zinc-300"
-                      )}
-                      aria-label="Toggle product status"
-                    >
-                      <span
-                        className={cn(
-                          "absolute top-1 size-4 rounded-full bg-white transition-transform",
-                          product.is_active
-                            ? "translate-x-5"
-                            : "translate-x-1"
-                        )}
-                      />
-                    </button>
-                  </td>
-                  <td className="px-3 py-4">
-                    <div className="flex justify-end gap-2">
-                      <Link
-                        href={`/vendor/products/${product.id}/edit`}
-                        className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-zinc-400 hover:text-zinc-900"
-                        aria-label={`Edit ${product.name}`}
-                      >
-                        <Pencil className="size-4" />
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(product)}
-                        className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-200 text-red-500 transition-colors hover:border-red-200 hover:bg-red-50"
-                        aria-label={`Delete ${product.name}`}
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </div>
+                    {canManage ? (
+                      <div className="flex justify-end gap-2">
+                        <Link
+                          href={`/vendor/products/${product.id}/edit`}
+                          className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-200 text-zinc-600 transition-colors hover:border-zinc-400 hover:text-zinc-900"
+                          aria-label={`Edit ${product.name}`}
+                        >
+                          <Pencil className="size-4" />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTarget(product)}
+                          className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-200 text-red-500 transition-colors hover:border-red-200 hover:bg-red-50"
+                          aria-label={`Delete ${product.name}`}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="block text-right text-xs font-medium text-zinc-500">
+                        Read only
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -301,39 +345,41 @@ export function ProductsTable({
         </div>
       )}
 
-      <Dialog
-        open={Boolean(deleteTarget)}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
-        }}
-      >
-        <DialogContent className="bg-white shadow-2xl">
-          <DialogHeader>
-            <DialogTitle>Delete product?</DialogTitle>
-            <DialogDescription>
-              This removes {deleteTarget?.name} from your catalog.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="bg-white">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDeleteTarget(null)}
-              className="rounded-lg border-zinc-200"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={handleDelete}
-              disabled={isPending}
-              className="rounded-lg bg-red-500 text-white hover:bg-red-600"
-            >
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {canManage && (
+        <Dialog
+          open={Boolean(deleteTarget)}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null)
+          }}
+        >
+          <DialogContent className="bg-white shadow-2xl">
+            <DialogHeader>
+              <DialogTitle>Delete product?</DialogTitle>
+              <DialogDescription>
+                This removes {deleteTarget?.name} from your catalog.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="bg-white">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-lg border-zinc-200"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleDelete}
+                disabled={isPending}
+                className="rounded-lg bg-red-500 text-white hover:bg-red-600"
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

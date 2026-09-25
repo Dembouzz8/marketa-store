@@ -70,7 +70,7 @@ export default async function VendorDashboardPage() {
 
   const { data: vendor } = await supabase
     .from("vendors")
-    .select("id, name, platform_fee_pct")
+    .select("id, name, platform_fee_pct, is_active")
     .eq("user_id", user.id)
     .single()
 
@@ -165,6 +165,11 @@ export default async function VendorDashboardPage() {
         <p className="mt-1 text-sm text-zinc-600">
           {getGreeting()}, {vendor.name}
         </p>
+        {!vendor.is_active && (
+          <p className="mt-3 inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+            Seller account pending activation
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -192,7 +197,11 @@ export default async function VendorDashboardPage() {
         <StatsCard
           title="Active Products"
           value={(productCount ?? 0).toLocaleString()}
-          subtitle="Visible in storefront"
+          subtitle={
+            vendor.is_active
+              ? "Visible in storefront"
+              : "Available after seller activation"
+          }
           icon={Package}
           color="purple"
         />
@@ -275,12 +284,21 @@ export default async function VendorDashboardPage() {
         <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-medium text-zinc-900">Quick Actions</h2>
           <div className="mt-5 space-y-3">
-            <Link
-              href="/vendor/products/new"
-              className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-amber-500 text-sm font-semibold text-zinc-900 transition-colors hover:bg-amber-400"
-            >
-              Add New Product
-            </Link>
+            {vendor.is_active ? (
+              <Link
+                href="/vendor/products/new"
+                className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-amber-500 text-sm font-semibold text-zinc-900 transition-colors hover:bg-amber-400"
+              >
+                Add New Product
+              </Link>
+            ) : (
+              <Link
+                href="/vendor/products"
+                className="inline-flex h-11 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm font-medium text-zinc-900 transition-colors hover:bg-zinc-50"
+              >
+                Review Products
+              </Link>
+            )}
             <Link
               href="/vendor/payouts"
               className="inline-flex h-11 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white text-sm font-medium text-zinc-900 transition-colors hover:bg-zinc-50"

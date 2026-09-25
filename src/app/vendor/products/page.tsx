@@ -9,32 +9,32 @@ type ActionResult = {
   error: string | null
 }
 
-async function getVendorId() {
+async function getVendorContext() {
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (!user) return { supabase, vendorId: null }
+  if (!user) return { supabase, vendor: null }
 
   const { data: vendor } = await supabase
     .from("vendors")
-    .select("id")
+    .select("id, is_active")
     .eq("user_id", user.id)
     .single()
 
-  return { supabase, vendorId: vendor?.id ?? null }
+  return { supabase, vendor: vendor ?? null }
 }
 
 export default async function VendorProductsPage() {
-  const { supabase, vendorId } = await getVendorId()
+  const { supabase, vendor } = await getVendorContext()
 
-  if (!vendorId) redirect("/vendor/login?error=not_a_vendor")
+  if (!vendor) redirect("/vendor/login?error=not_a_vendor")
 
   const { data: productsData } = await supabase
     .from("products")
     .select("*")
-    .eq("vendor_id", vendorId)
+    .eq("vendor_id", vendor.id)
     .order("created_at", { ascending: false })
 
   const products = (productsData ?? []) as Product[]
@@ -43,20 +43,25 @@ export default async function VendorProductsPage() {
   async function deleteProduct(productId: string): Promise<ActionResult> {
     "use server"
 
-    const { supabase: actionSupabase, vendorId: actionVendorId } =
-      await getVendorId()
+    const { supabase: actionSupabase, vendor: actionVendor } =
+      await getVendorContext()
 
-    if (!actionVendorId) {
+    if (!actionVendor) {
       return { error: "You must be signed in as a vendor." }
+    }
+    if (!actionVendor.is_active) {
+      return { error: "Product management becomes available after seller activation." }
     }
 
     const { error } = await actionSupabase
       .from("products")
       .delete()
       .eq("id", productId)
-      .eq("vendor_id", actionVendorId)
+      .eq("vendor_id", actionVendor.id)
 
-    if (error) return { error: error.message }
+    if (error) {
+      return { error: "Unable to delete the product. Please try again." }
+    }
 
     revalidatePath("/vendor/products")
     return { error: null }
@@ -68,20 +73,25 @@ export default async function VendorProductsPage() {
   ): Promise<ActionResult> {
     "use server"
 
-    const { supabase: actionSupabase, vendorId: actionVendorId } =
-      await getVendorId()
+    const { supabase: actionSupabase, vendor: actionVendor } =
+      await getVendorContext()
 
-    if (!actionVendorId) {
+    if (!actionVendor) {
       return { error: "You must be signed in as a vendor." }
+    }
+    if (!actionVendor.is_active) {
+      return { error: "Product management becomes available after seller activation." }
     }
 
     const { error } = await actionSupabase
       .from("products")
       .update({ is_active: isActive })
       .eq("id", productId)
-      .eq("vendor_id", actionVendorId)
+      .eq("vendor_id", actionVendor.id)
 
-    if (error) return { error: error.message }
+    if (error) {
+      return { error: "Unable to update the product. Please try again." }
+    }
 
     revalidatePath("/vendor/products")
     return { error: null }
@@ -95,11 +105,22 @@ export default async function VendorProductsPage() {
           {activeCount} active
         </span>
       </div>
-      <ProductsTable
-        products={products}
-        onDelete={deleteProduct}
-        onToggleActive={toggleProductActive}
-      />
+      {!vendor.is_active && (
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Your seller account is not active yet. You can review your products,
+          but product management becomes available after activation.
+        </p>
+      )}
+      {vendor.is_active ? (
+        <ProductsTable
+          products={products}
+          canManage
+          onDelete={deleteProduct}
+          onToggleActive={toggleProductActive}
+        />
+      ) : (
+        <ProductsTable products={products} canManage={false} />
+      )}
     </div>
   )
 }
