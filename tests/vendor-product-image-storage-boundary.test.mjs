@@ -244,6 +244,8 @@ test("Batch 4B1 working-tree scope excludes frozen systems", () => {
     productFormFile,
     testFile,
     "tests/vendor-product-activation-boundary.test.mjs",
+    "supabase/migrations/20260926231820_add_vendor_activation_authority.sql",
+    "tests/vendor-activation-authority.test.mjs",
   ])
 
   for (const file of changed) {
