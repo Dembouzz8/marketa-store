@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { getVendorApplication } from "@/lib/admin/vendor-applications"
+import { ActivationForm } from "./activation-form"
 import { ProvisionForm } from "./provision-form"
 import { ReviewForm } from "./review-form"
 
@@ -16,6 +17,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
     ["Location", application.location],
     ["Review status", application.status.replaceAll("_", " ")],
     ["Provisioning status (read-only)", application.provisioning_status.replaceAll("_", " ")],
+    ["Seller activation", application.activation.state.replaceAll("_", " ")],
     ["Terms accepted", application.terms_accepted ? "Yes" : "No"],
     ["Submitted (UTC)", new Date(application.created_at).toISOString()],
     ["Reviewed (UTC)", application.reviewed_at ? new Date(application.reviewed_at).toISOString() : "Not reviewed"],
@@ -30,7 +32,7 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
     <article>
       <Link href="/admin/vendor-applications" className="text-sm underline underline-offset-4">Back to vendor applications</Link>
       <h1 className="mt-5 break-words text-3xl font-semibold">{application.business_name}</h1>
-      <p className="mt-3 text-sm text-zinc-600">Approval and provisioning are separate. This surface cannot create, activate or verify vendors.</p>
+      <p className="mt-3 text-sm text-zinc-600">Approval, provisioning, activation, and verification are separate seller states. Activation never verifies a seller.</p>
       <dl className="mt-6 grid gap-6 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm sm:grid-cols-2">
         {fields.map(([label, value]) => <div key={label} className="min-w-0">
           <dt className="text-sm font-medium text-zinc-500">{label}</dt>
@@ -49,6 +51,11 @@ export default async function ApplicationDetailPage({ params }: { params: Promis
         hasProvisionedVendor={
           application.vendor_id !== null || application.provisioned_at !== null
         }
+      />
+      <ActivationForm
+        applicationId={application.id}
+        activationState={application.activation.state}
+        activatedAt={application.activation.activatedAt}
       />
     </article>
   )

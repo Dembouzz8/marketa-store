@@ -484,6 +484,12 @@ test("Batch 4A working-tree scope excludes frozen systems", () => {
     "tests/vendor-product-image-storage-boundary.test.mjs",
     "supabase/migrations/20260926231820_add_vendor_activation_authority.sql",
     "tests/vendor-activation-authority.test.mjs",
+    "src/lib/admin/origin.ts",
+    "src/lib/admin/vendor-applications.ts",
+    "src/app/admin/(protected)/vendor-applications/actions.ts",
+    "src/app/admin/(protected)/vendor-applications/[id]/page.tsx",
+    "src/app/admin/(protected)/vendor-applications/[id]/activation-form.tsx",
+    "tests/vendor-activation-admin.test.mjs",
   ])
   for (const file of changed) {
     assert.ok(allowed.has(file), `Unexpected Batch 4A file: ${file}`)

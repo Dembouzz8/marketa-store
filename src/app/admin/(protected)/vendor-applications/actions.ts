@@ -6,11 +6,40 @@ import { FunctionsHttpError } from "@supabase/supabase-js"
 import { requireAdmin } from "@/lib/admin/auth"
 import { assertAdminOrigin } from "@/lib/admin/origin"
 import { createAdminClient } from "@/lib/admin/supabase-admin"
-import { applicationIdPattern, applicationStatuses } from "@/lib/admin/vendor-applications"
+import {
+  applicationIdPattern,
+  applicationStatuses,
+  reconcileVendorApplicationActivation,
+} from "@/lib/admin/vendor-applications"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
 
 export type ReviewResult = { message: string; revision: string }
 export type ProvisionResult = { message: string; revision: string }
+type ActivationRpcOutcome =
+  | "activated"
+  | "already_active"
+  | "unauthorized"
+  | "invalid_input"
+  | "unavailable"
+  | "invalid_state"
+  | "operation_failed"
+export type ActivationActionOutcome =
+  | ActivationRpcOutcome
+  | "invalid_request"
+  | "reconciled_active"
+  | "uncertain"
+  | "idle"
+export type ActivationResult = {
+  outcome: ActivationActionOutcome
+  message: string
+  revision: string
+}
+
+export const initialActivationResult: ActivationResult = {
+  outcome: "idle",
+  message: "",
+  revision: "",
+}
 
 const messages = {
   review_started: "Application marked under review.",
@@ -61,6 +90,22 @@ const provisioningMessages = {
 
 const uncertainProvisioningMessage =
   "Provisioning status is uncertain. Review the application before retrying."
+
+const activationMessages: Record<Exclude<ActivationActionOutcome, "idle">, string> = {
+  activated: "Seller activated.",
+  already_active: "Seller is already active.",
+  reconciled_active:
+    "Seller is active. The activation result was reconciled from current state.",
+  unauthorized: "You no longer have access to activate sellers.",
+  invalid_input: "The activation request was invalid. Reload the page and try again.",
+  invalid_request: "The activation request was invalid. Reload the page and try again.",
+  unavailable: "This application is no longer available.",
+  invalid_state:
+    "Seller activation is unavailable for the current application state. Refresh and reconcile the seller linkage.",
+  operation_failed: "Seller activation could not be completed. Refresh and try again.",
+  uncertain:
+    "Seller activation status is uncertain. Refresh the page and retry manually only after reviewing the current seller state.",
+}
 
 type ProvisioningOutcome = keyof typeof provisioningMessages
 const successfulProvisioningOutcomes = new Set<ProvisioningOutcome>([
@@ -130,6 +175,92 @@ function parseOutcome(data: unknown, applicationId: string): keyof typeof messag
   return outcome
 }
 
+function parseActivationOutcome(
+  data: unknown,
+  applicationId: string
+): ActivationRpcOutcome | null {
+  if (!Array.isArray(data) || data.length !== 1) return null
+  const row = data[0]
+  if (!row || typeof row !== "object") return null
+  const record = row as Record<string, unknown>
+  const expectedKeys = [
+    "activated_at",
+    "application_id",
+    "is_active",
+    "outcome",
+    "vendor_id",
+  ]
+  if (
+    Object.keys(record).sort().join(",") !== expectedKeys.join(",") ||
+    typeof record.outcome !== "string" ||
+    ![
+      "activated",
+      "already_active",
+      "unauthorized",
+      "invalid_input",
+      "unavailable",
+      "invalid_state",
+      "operation_failed",
+    ].includes(record.outcome) ||
+    record.application_id !== applicationId
+  ) {
+    return null
+  }
+
+  const outcome = record.outcome as ActivationRpcOutcome
+  if (outcome === "activated" || outcome === "already_active") {
+    if (
+      typeof record.vendor_id !== "string" ||
+      !applicationIdPattern.test(record.vendor_id) ||
+      record.is_active !== true ||
+      (record.activated_at !== null &&
+        (typeof record.activated_at !== "string" ||
+          Number.isNaN(Date.parse(record.activated_at)))) ||
+      (outcome === "activated" && record.activated_at === null)
+    ) {
+      return null
+    }
+    return outcome
+  }
+
+  if (
+    record.vendor_id !== null ||
+    record.is_active !== null ||
+    record.activated_at !== null
+  ) {
+    return null
+  }
+  return outcome
+}
+
+function activationResult(
+  outcome: Exclude<ActivationActionOutcome, "idle">,
+  refresh = false,
+  applicationId?: string
+): ActivationResult {
+  if (refresh && applicationId) {
+    revalidatePath("/admin/vendor-applications")
+    revalidatePath(`/admin/vendor-applications/${applicationId}`)
+  }
+  return {
+    outcome,
+    message: activationMessages[outcome],
+    revision: refresh ? crypto.randomUUID() : "",
+  }
+}
+
+async function reconcileActivation(applicationId: string): Promise<ActivationResult> {
+  try {
+    const state = await reconcileVendorApplicationActivation(applicationId)
+    if (state === "active") {
+      return activationResult("reconciled_active", true, applicationId)
+    }
+  } catch {
+    // A failed read cannot establish whether the mutation committed.
+  }
+  return activationResult("uncertain")
+}
+
 export async function reviewVendorApplication(_previous: ReviewResult, formData: FormData): Promise<ReviewResult> {
   try {
     await assertAdminOrigin()
@@ -174,6 +305,60 @@ export async function reviewVendorApplication(_previous: ReviewResult, formData:
   const result = finish(outcome ? messages[outcome] : messages.operation_failed)
   if (outcome === "unauthorized") redirect("/admin/login?access=denied")
   return result
+}
+
+export async function activateVendorApplication(
+  _previous: ActivationResult,
+  formData: FormData
+): Promise<ActivationResult> {
+  void _previous
+  try {
+    await assertAdminOrigin()
+  } catch {
+    return activationResult("invalid_request")
+  }
+
+  const rawId = formData.get("application_id")
+  if (
+    typeof rawId !== "string" ||
+    formData.getAll("application_id").length !== 1 ||
+    Array.from(formData.keys()).some((key) => key !== "application_id") ||
+    !applicationIdPattern.test(rawId)
+  ) {
+    return activationResult("invalid_request")
+  }
+  const applicationId = rawId.toLowerCase()
+  const admin = await requireAdmin()
+
+  let client: ReturnType<typeof createAdminClient>
+  try {
+    client = createAdminClient()
+  } catch {
+    return activationResult("operation_failed")
+  }
+
+  let data: unknown
+  let error: unknown
+  try {
+    const response = await client.rpc("activate_vendor_application", {
+      p_application_id: applicationId,
+      p_admin_user_id: admin.userId,
+    })
+    data = response.data
+    error = response.error
+  } catch {
+    return reconcileActivation(applicationId)
+  }
+
+  if (error) return reconcileActivation(applicationId)
+  const outcome = parseActivationOutcome(data, applicationId)
+  if (!outcome) return reconcileActivation(applicationId)
+
+  return activationResult(
+    outcome,
+    outcome === "activated" || outcome === "already_active",
+    applicationId
+  )
 }
 
 export async function initiateVendorProvisioning(

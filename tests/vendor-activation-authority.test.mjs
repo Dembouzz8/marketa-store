@@ -282,8 +282,13 @@ test("Batch 4C1 working-tree scope contains only the migration and focused test"
     new Set([
       "tests/vendor-product-activation-boundary.test.mjs",
       "tests/vendor-product-image-storage-boundary.test.mjs",
-      migrationFile,
-      testFile,
+      "tests/vendor-activation-authority.test.mjs",
+      "src/lib/admin/origin.ts",
+      "src/lib/admin/vendor-applications.ts",
+      "src/app/admin/(protected)/vendor-applications/actions.ts",
+      "src/app/admin/(protected)/vendor-applications/[id]/page.tsx",
+      "src/app/admin/(protected)/vendor-applications/[id]/activation-form.tsx",
+      "tests/vendor-activation-admin.test.mjs",
     ])
   )
 })
