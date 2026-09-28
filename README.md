@@ -170,13 +170,16 @@ do not disclose whether an account exists or expose raw provider errors.
 - Successful finalization links the application and creates an inactive
   vendor with `provisioning_status = provisioned`. It does not activate or
   verify the vendor and creates no `vendor_verifications` row.
-- Production validation proved an application at `approved/provisioned`, an
-  inactive vendor, and zero verification rows. Shared password setup and
-  customer/seller password recovery were also production validated without
-  changing that application or vendor state.
+- Shared password setup and customer/seller password recovery were production
+  validated. Seller activation was subsequently implemented and production
+  validated through the protected admin application-detail flow. Activation
+  remains separate from verification and does not create a
+  `vendor_verifications` row.
 
-Vendor logo and storage support remains a deferred enhancement. Payment and
-paid-order outbox redesign remains separately deferred and frozen.
+Vendor logo support remains a deferred enhancement. The real product-image
+production smoke test is also intentionally deferred until there is an actual
+product/image the project owner wants to use. Payment and paid-order outbox
+redesign remains separately deferred and frozen.
 
 ## Vendor Portal
 
@@ -188,20 +191,33 @@ The intended new-seller journey is:
 
 `application -> approval -> enrollment invitation -> explicit invite`
 `confirmation -> onboarding -> seller-account finalization -> password setup`
-`-> seller dashboard`
+`-> seller dashboard -> separate admin activation`
 
-The finalization step creates the vendor inactive. Activation and verification
-remain separate administrative stages.
+The finalization step creates the vendor inactive. An authorized admin may
+subsequently activate the approved and provisioned seller through the protected
+application-detail page. Activation and verification remain separate
+administrative stages; verification is not required for activation.
 
-### Deferred activation-boundary hardening
+### Seller activation and product boundaries
 
-Inactive vendors can currently reach product-management surfaces. Public
-product-read RLS relies on product active state without necessarily requiring
-the owning vendor itself to be active. Storefront UI behavior may hide an
-inactive vendor, and checkout rejects inactive vendors, but neither replaces a
-direct Data API/RLS audit. A dedicated security batch must harden product
-management and product-read policies and review new-product defaults and
-vendor-dashboard wording.
+Seller activation authority is implemented and production validated. Inactive
+sellers retain dashboard, settings, orders, payouts, and read-only access to
+their own product history, but cannot create, edit, delete, change stock, or
+toggle product status. Active sellers can manage their own products, and new
+products are inactive drafts by default.
+
+Public product visibility requires both `products.is_active = true` and an
+active owning vendor. Own-product reads remain independent of seller
+activation, sellers cannot update `vendors.is_active`, and the visibility and
+mutation rules are enforced at the database boundary.
+
+The public `product-images` bucket keeps its 5 MiB limit and JPEG, PNG, and
+WebP allow-list. Authenticated active sellers may read and insert only beneath
+their own vendor UUID folder; seller UPDATE and DELETE access is not granted.
+Application-generated names use
+`<vendorId>/<crypto.randomUUID()>.<mime-derived-extension>`. Because the bucket
+is public, an exact known public object URL remains fetchable independently of
+product or vendor listing visibility.
 
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation

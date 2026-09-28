@@ -530,8 +530,8 @@ reviewer identity is derived from the authenticated admin session. Approval
 leaves `status = approved` and `provisioning_status = not_started`. It does not
 provision an Auth identity, create or activate a vendor, or verify one.
 
-Vendor provisioning and shared Auth are production validated through Batch
-3F2:
+Vendor provisioning, shared Auth, and seller activation are production
+validated through Batch 4C:
 
 - Batches 3A–3D provide application-scoped identity resolution, scanner-safe
   invitation acceptance, controlled admin initiation, Auth identity recording,
@@ -547,24 +547,40 @@ Vendor provisioning and shared Auth are production validated through Batch
 - Batch 3F2 provides shared scanner-safe password recovery for customer and
   seller login.
 
-Production validation proved seller finalization, password setup, seller
-logout/login, recovery-email delivery, token-free explicit confirmation,
-replacement-password setup, and both seller and customer login with the same
-replacement password. The application remained approved and provisioned; the
-vendor remained inactive, with zero verification rows.
+Batch 3 production validation proved seller finalization, password setup,
+seller logout/login, recovery-email delivery, token-free explicit
+confirmation, replacement-password setup, and both seller and customer login
+with the same replacement password. The application reached approved and
+provisioned while the seller remained inactive until the separate activation
+stage.
+
+### Completed seller activation and product boundaries
+
+- **Batch 4A complete:** inactive sellers retain dashboard, settings, orders,
+  payouts, and read-only access to their own product history. They cannot
+  create, edit, delete, change stock, or toggle product status. Active sellers
+  can manage their own products, and new products default to inactive drafts.
+- Public product visibility requires an active product and an active owning
+  vendor. Own-product SELECT remains independent of vendor activation, and
+  sellers cannot update `vendors.is_active`.
+- **Batch 4B1 complete/applied:** the public `product-images` bucket retains a
+  5 MiB limit and allows JPEG, PNG, and WebP. Authenticated active sellers may
+  SELECT and INSERT only within their own vendor UUID namespace. Seller UPDATE
+  and DELETE remain unavailable. Generated object names use
+  `<vendorId>/<crypto.randomUUID()>.<mime-derived-extension>`, and legacy root
+  objects remain untouched.
+- The bucket remains public, so an exact known object URL can be fetched
+  independently of product/vendor listing visibility. A real-image production
+  smoke test is deferred until there is an actual product/image the project
+  owner wants to use; Batch 4B1 itself is complete.
+- **Batch 4C complete/production validated:** the protected admin application
+  detail page activates an already approved and provisioned seller through a
+  strict same-origin, server-authorized, explicit two-step action. Activation
+  unlocks selling authority but does not verify the seller. Ambiguous mutation
+  results are reconciled once read-only and are never automatically replayed.
 
 Approval, provisioning, activation, and verification remain separate. Vendor
-logo/storage support and payment/paid-order outbox redesign remain deferred.
-
-### Next security-hardening work: activation boundary
-
-Inactive vendors can currently reach product-management surfaces. Public
-product-read RLS relies on product active state without necessarily requiring
-the owning vendor itself to be active. Storefront UI behavior may hide inactive
-vendors, but direct Data API/RLS access requires its own audit and hardening.
-Checkout already rejects inactive vendors; that is not a substitute for
-product-management and read-policy enforcement. Review new-product defaults
-and vendor-dashboard wording in the same future batch.
+logo support and payment/paid-order outbox redesign remain deferred.
 
 ### Phase 4 — Customer experience
 
@@ -586,8 +602,8 @@ Deferred Phase 4 enhancements:
 
 Separate existing backlogs remain outside Phase 4 and are not Phase 4
 blockers: payment/outbox hardening, refunds, payout scheduling, stock decrement
-redesign, the activation-boundary security work above, and other separately
-authorized vendor portal cleanup.
+redesign, seller suspension/deactivation/reactivation, verification workflow
+administration, and other separately authorized vendor portal cleanup.
 
 ---
 
