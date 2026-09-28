@@ -280,11 +280,8 @@ test("Batch 4C1 working-tree scope contains only the migration and focused test"
   assert.deepEqual(
     changed,
     new Set([
-      "tests/vendor-product-activation-boundary.test.mjs",
-      "tests/vendor-product-image-storage-boundary.test.mjs",
       "tests/vendor-activation-authority.test.mjs",
-      "src/app/admin/(protected)/error.tsx",
-      "src/lib/admin/vendor-applications.ts",
+      "src/app/admin/(protected)/vendor-applications/[id]/activation-form.tsx",
       "src/app/admin/(protected)/vendor-applications/actions.ts",
       "tests/vendor-activation-admin.test.mjs",
     ])

@@ -35,12 +35,6 @@ export type ActivationResult = {
   revision: string
 }
 
-export const initialActivationResult: ActivationResult = {
-  outcome: "idle",
-  message: "",
-  revision: "",
-}
-
 const messages = {
   review_started: "Application marked under review.",
   approved: "Application approved. Vendor provisioning has not started.",

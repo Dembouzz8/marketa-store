@@ -2,11 +2,15 @@
 
 import { useActionState, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import {
-  activateVendorApplication,
-  initialActivationResult,
-} from "../actions"
+import { activateVendorApplication } from "../actions"
+import type { ActivationResult } from "../actions"
 import type { VendorActivationState } from "@/lib/admin/vendor-applications"
+
+const initialActivationResult: ActivationResult = {
+  outcome: "idle",
+  message: "",
+  revision: "",
+}
 
 type ActivationControlState = {
   canActivate: boolean

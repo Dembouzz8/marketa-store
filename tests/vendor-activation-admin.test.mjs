@@ -694,7 +694,6 @@ function loadActivationForm({ confirming = false, pending = false } = {}) {
     },
     "../actions": {
       activateVendorApplication() {},
-      initialActivationResult: { outcome: "idle", message: "", revision: "" },
     },
     "@/lib/admin/vendor-applications": {},
   })
@@ -777,6 +776,38 @@ test("detail page integrates activation state without rendering internal actor i
   assert.match(page, /activatedAt=\{application\.activation\.activatedAt\}/)
   assert.equal(page.includes("activated_by"), false)
   assert.match(page, /Activation never verifies a seller/)
+})
+
+test('the "use server" module exports only async runtime functions and the form owns initial state', () => {
+  const actions = fs.readFileSync(path.join(root, actionsFile), "utf8")
+  const form = fs.readFileSync(path.join(root, formFile), "utf8")
+
+  assert.match(actions, /^"use server"/)
+  assert.doesNotMatch(actions, /export\s+const\s+initialActivationResult\b/)
+  assert.deepEqual(
+    [...actions.matchAll(
+      /^\s*export\s+(?!async\s+function\b)(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm
+    )].map((match) => match[1]),
+    []
+  )
+
+  assert.match(
+    form,
+    /import\s+\{\s*activateVendorApplication\s*\}\s+from\s+["']\.\.\/actions["']/
+  )
+  assert.match(
+    form,
+    /import\s+type\s+\{\s*ActivationResult\s*\}\s+from\s+["']\.\.\/actions["']/
+  )
+  assert.match(
+    form,
+    /const\s+initialActivationResult:\s*ActivationResult\s*=\s*\{[\s\S]*?outcome:\s*["']idle["'][\s\S]*?\}/
+  )
+  assert.match(
+    form,
+    /useActionState\(\s*activateVendorApplication,\s*initialActivationResult\s*\)/
+  )
+  assert.doesNotMatch(form, /export\s+const\s+initialActivationResult\b/)
 })
 
 test("activation source preserves all frozen boundaries", () => {
