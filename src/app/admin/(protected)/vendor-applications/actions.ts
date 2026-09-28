@@ -1,7 +1,7 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { redirect } from "next/navigation"
+import { redirect, unstable_rethrow } from "next/navigation"
 import { FunctionsHttpError } from "@supabase/supabase-js"
 import { requireAdmin } from "@/lib/admin/auth"
 import { assertAdminOrigin } from "@/lib/admin/origin"
@@ -255,8 +255,10 @@ async function reconcileActivation(applicationId: string): Promise<ActivationRes
     if (state === "active") {
       return activationResult("reconciled_active", true, applicationId)
     }
-  } catch {
-    // A failed read cannot establish whether the mutation committed.
+  } catch (error) {
+    unstable_rethrow(error)
+    console.error("MARKETA_ADMIN_VENDOR_ACTIVATION_RECONCILIATION_FAILED")
+    return activationResult("uncertain")
   }
   return activationResult("uncertain")
 }
@@ -328,12 +330,21 @@ export async function activateVendorApplication(
     return activationResult("invalid_request")
   }
   const applicationId = rawId.toLowerCase()
-  const admin = await requireAdmin()
+  let admin: Awaited<ReturnType<typeof requireAdmin>>
+  try {
+    admin = await requireAdmin()
+  } catch (error) {
+    unstable_rethrow(error)
+    console.error("MARKETA_ADMIN_VENDOR_ACTIVATION_AUTH_FAILED")
+    return activationResult("operation_failed")
+  }
 
   let client: ReturnType<typeof createAdminClient>
   try {
     client = createAdminClient()
-  } catch {
+  } catch (error) {
+    unstable_rethrow(error)
+    console.error("MARKETA_ADMIN_VENDOR_ACTIVATION_CLIENT_INIT_FAILED")
     return activationResult("operation_failed")
   }
 
@@ -346,13 +357,21 @@ export async function activateVendorApplication(
     })
     data = response.data
     error = response.error
-  } catch {
+  } catch (rpcError) {
+    unstable_rethrow(rpcError)
+    console.error("MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_TRANSPORT_FAILED")
     return reconcileActivation(applicationId)
   }
 
-  if (error) return reconcileActivation(applicationId)
+  if (error) {
+    console.error("MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_RETURNED_ERROR")
+    return reconcileActivation(applicationId)
+  }
   const outcome = parseActivationOutcome(data, applicationId)
-  if (!outcome) return reconcileActivation(applicationId)
+  if (!outcome) {
+    console.error("MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_RESPONSE_INVALID")
+    return reconcileActivation(applicationId)
+  }
 
   return activationResult(
     outcome,

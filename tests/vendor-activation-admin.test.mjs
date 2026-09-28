@@ -9,6 +9,7 @@ import ts from "typescript"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const originFile = "src/lib/admin/origin.ts"
 const applicationsFile = "src/lib/admin/vendor-applications.ts"
+const errorFile = "src/app/admin/(protected)/error.tsx"
 const actionsFile =
   "src/app/admin/(protected)/vendor-applications/actions.ts"
 const pageFile =
@@ -163,15 +164,19 @@ function rpcRow(outcome, overrides = {}) {
 function actionHarness({
   originThrows = false,
   adminUserId = adminId,
+  adminFailure = null,
   clientThrows = false,
   rpcData = [rpcRow("activated")],
   rpcError = null,
   rpcThrows = false,
   reconciliationState = "inactive",
   reconciliationThrows = false,
+  reconciliationRedirects = false,
 } = {}) {
   const calls = []
+  const diagnostics = []
   const revalidated = []
+  const redirectSignal = Symbol("framework redirect")
   let rpcCount = 0
   let reconciliationCount = 0
   let rpcInvocation = null
@@ -184,11 +189,18 @@ function actionHarness({
     },
     "next/navigation": {
       redirect(value) { throw new Error(`redirect:${value}`) },
+      unstable_rethrow(error) {
+        if (error === redirectSignal) throw error
+      },
     },
     "@supabase/supabase-js": { FunctionsHttpError: MockFunctionsHttpError },
     "@/lib/admin/auth": {
       async requireAdmin() {
         calls.push("requireAdmin")
+        if (adminFailure === "ordinary") {
+          throw new Error("private admin detail")
+        }
+        if (adminFailure === "redirect") throw redirectSignal
         return { userId: adminUserId, email: "admin@example.com" }
       },
     },
@@ -220,6 +232,7 @@ function actionHarness({
         calls.push("reconcileVendorApplicationActivation")
         reconciliationCount++
         assert.equal(id, applicationId)
+        if (reconciliationRedirects) throw redirectSignal
         if (reconciliationThrows) throw new Error("private read detail")
         return reconciliationState
       },
@@ -229,11 +242,17 @@ function actionHarness({
         throw new Error("Activation must not use the session client")
       },
     },
+  }, {
+    console: {
+      error(value) { diagnostics.push(String(value)) },
+    },
   })
 
   return {
     actions,
     calls,
+    diagnostics,
+    redirectSignal,
     revalidated,
     state: () => ({ rpcCount, reconciliationCount, rpcInvocation }),
   }
@@ -241,10 +260,13 @@ function actionHarness({
 
 function reconciliationHarness({
   adminThrows = false,
+  clientThrows = false,
   application = null,
+  applicationError = null,
   vendor = null,
 } = {}) {
   const calls = []
+  const diagnostics = []
   const adminError = new Error("admin denied")
 
   const applications = load(applicationsFile, {
@@ -259,6 +281,7 @@ function reconciliationHarness({
     "./supabase-admin": {
       createAdminClient() {
         calls.push("createAdminClient")
+        if (clientThrows) throw new Error("private client detail")
         return {
           from(table) {
             calls.push(`from:${table}`)
@@ -274,7 +297,10 @@ function reconciliationHarness({
               },
               async maybeSingle() {
                 calls.push(`maybeSingle:${table}`)
-                return { data: row, error: null }
+                return {
+                  data: row,
+                  error: table === "vendor_applications" ? applicationError : null,
+                }
               },
             }
             return query
@@ -282,9 +308,13 @@ function reconciliationHarness({
         }
       },
     },
+  }, {
+    console: {
+      error(value) { diagnostics.push(String(value)) },
+    },
   })
 
-  return { applications, calls, adminError }
+  return { applications, calls, diagnostics, adminError }
 }
 
 function activationForm(entries = [["application_id", applicationId]]) {
@@ -354,6 +384,31 @@ test("activation derives the current admin and invokes the service-role RPC once
   ])
 })
 
+test("ordinary main authorization failure is controlled before client creation", async () => {
+  const harness = actionHarness({ adminFailure: "ordinary" })
+  const result = await runActivation(harness)
+  assert.equal(result.outcome, "operation_failed")
+  assert.equal(result.message.includes("private"), false)
+  assert.deepEqual(harness.calls, ["assertAdminOrigin", "requireAdmin"])
+  assert.equal(harness.state().rpcCount, 0)
+  assert.equal(harness.state().reconciliationCount, 0)
+  assert.deepEqual(harness.diagnostics, [
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_AUTH_FAILED",
+  ])
+})
+
+test("main authorization framework redirect propagates without becoming an action result", async () => {
+  const harness = actionHarness({ adminFailure: "redirect" })
+  await assert.rejects(
+    runActivation(harness),
+    (error) => error === harness.redirectSignal
+  )
+  assert.deepEqual(harness.calls, ["assertAdminOrigin", "requireAdmin"])
+  assert.equal(harness.state().rpcCount, 0)
+  assert.equal(harness.state().reconciliationCount, 0)
+  assert.deepEqual(harness.diagnostics, [])
+})
+
 test("all bounded RPC outcomes map to controlled action results", async () => {
   for (const outcome of [
     "activated",
@@ -404,6 +459,37 @@ test("transport uncertainty reconciles once and fails neutrally when active stat
     assert.equal(harness.state().rpcCount, 1)
     assert.equal(harness.state().reconciliationCount, 1)
   }
+})
+
+test("reconciliation framework redirect propagates without replaying activation", async () => {
+  const harness = actionHarness({
+    rpcThrows: true,
+    reconciliationRedirects: true,
+  })
+  await assert.rejects(
+    runActivation(harness),
+    (error) => error === harness.redirectSignal
+  )
+  assert.equal(harness.state().rpcCount, 1)
+  assert.equal(harness.state().reconciliationCount, 1)
+  assert.deepEqual(harness.diagnostics, [
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_TRANSPORT_FAILED",
+  ])
+})
+
+test("ordinary reconciliation failure remains uncertain without RPC replay", async () => {
+  const harness = actionHarness({
+    rpcThrows: true,
+    reconciliationThrows: true,
+  })
+  const result = await runActivation(harness)
+  assert.equal(result.outcome, "uncertain")
+  assert.equal(harness.state().rpcCount, 1)
+  assert.equal(harness.state().reconciliationCount, 1)
+  assert.deepEqual(harness.diagnostics, [
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_TRANSPORT_FAILED",
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_RECONCILIATION_FAILED",
+  ])
 })
 
 test("service-role initialization failure is controlled and performs no mutation or reconciliation", async () => {
@@ -480,6 +566,51 @@ test("admin loader derives activation from the exact application and vendor link
   assert.match(source, /reconcileVendorApplicationActivation/)
 })
 
+test("admin loader diagnostics expose only fixed labels and bounded database codes", async () => {
+  const readFailure = reconciliationHarness({
+    applicationError: {
+      code: "PGRST123",
+      message: "private database message",
+      details: applicationId,
+    },
+  })
+  await assert.rejects(
+    readFailure.applications.getVendorApplication(applicationId),
+    /Unable to load this application\./
+  )
+  assert.deepEqual(readFailure.diagnostics, [
+    "MARKETA_ADMIN_VENDOR_APPLICATION_READ_FAILED code=PGRST123",
+  ])
+
+  const unexpectedFailure = reconciliationHarness({ clientThrows: true })
+  await assert.rejects(
+    unexpectedFailure.applications.getVendorApplication(applicationId),
+    /Unable to load this application\./
+  )
+  assert.deepEqual(unexpectedFailure.diagnostics, [
+    "MARKETA_ADMIN_VENDOR_APPLICATION_LOAD_FAILED",
+  ])
+
+  const diagnostics = [
+    ...readFailure.diagnostics,
+    ...unexpectedFailure.diagnostics,
+  ].join(" ")
+  for (const forbidden of [
+    applicationId,
+    vendorId,
+    adminId,
+    "private",
+    "@",
+  ]) {
+    assert.equal(diagnostics.includes(forbidden), false, forbidden)
+  }
+
+  const source = fs.readFileSync(path.join(root, applicationsFile), "utf8")
+  assert.match(source, /MARKETA_ADMIN_VENDOR_APPLICATION_READ_FAILED/)
+  assert.match(source, /MARKETA_ADMIN_VENDOR_APPLICATION_LOAD_FAILED/)
+  assert.doesNotMatch(source, /console\.error\(error\)/)
+})
+
 function findElements(node, type, found = []) {
   if (!node || typeof node !== "object") return found
   if (node.type === type) found.push(node)
@@ -499,6 +630,49 @@ function collectText(node, values = []) {
   }
   return values
 }
+
+function loadAdminError(error, reset = () => {}) {
+  const jsx = (type, props, key) => ({ type, props: props ?? {}, key })
+  const { default: AdminError } = load(errorFile, {
+    "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: Symbol("Fragment") },
+    "next/link": { default: "a" },
+  })
+  return AdminError({ error, reset })
+}
+
+test("admin error boundary renders only safe copy and a bounded digest", () => {
+  let resetCalls = 0
+  const privateMessage = "private database failure"
+  const privateStack = "private stack and UUID"
+  const privateCause = "private cause and email"
+  const tree = loadAdminError(
+    {
+      message: privateMessage,
+      stack: privateStack,
+      cause: privateCause,
+      digest: "safe_digest-123",
+    },
+    () => { resetCalls++ }
+  )
+  const text = collectText(tree).join(" ")
+  assert.match(text, /Unable to load admin review/)
+  assert.match(text, /Please try again\. No automatic review retry will be performed\./)
+  assert.match(text, /Try again/)
+  assert.match(text, /Return to login/)
+  assert.match(text, /Reference:\s+safe_digest-123/)
+  assert.equal(text.includes(privateMessage), false)
+  assert.equal(text.includes(privateStack), false)
+  assert.equal(text.includes(privateCause), false)
+
+  findElements(tree, "button")[0].props.onClick()
+  assert.equal(resetCalls, 1)
+
+  const invalidDigestText = collectText(
+    loadAdminError({ message: privateMessage, digest: "unsafe digest" })
+  ).join(" ")
+  assert.equal(invalidDigestText.includes("Reference:"), false)
+  assert.equal(invalidDigestText.includes("unsafe digest"), false)
+})
 
 function loadActivationForm({ confirming = false, pending = false } = {}) {
   const jsx = (type, props, key) => ({ type, props: props ?? {}, key })
@@ -618,11 +792,22 @@ test("activation source preserves all frozen boundaries", () => {
   assert.notEqual(actionEnd, -1)
   const activationAction = actions.slice(actionStart, actionEnd)
   assert.match(activationAction, /await assertAdminOrigin\(\)/)
-  assert.match(activationAction, /const admin = await requireAdmin\(\)/)
+  assert.match(activationAction, /admin = await requireAdmin\(\)/)
+  assert.match(activationAction, /unstable_rethrow\(error\)/)
   assert.match(activationAction, /createAdminClient\(\)/)
   assert.match(activationAction, /rpc\("activate_vendor_application"/)
   assert.doesNotMatch(activationAction, /createSupabaseServerClient/)
   assert.doesNotMatch(activationAction, /vendor_verifications|products|storage|orders|payout|checkout/i)
   assert.doesNotMatch(activationAction, /deactiv|suspend|reactivat/i)
   assert.equal((activationAction.match(/rpc\("activate_vendor_application"/g) ?? []).length, 1)
+  for (const marker of [
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_AUTH_FAILED",
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_CLIENT_INIT_FAILED",
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_TRANSPORT_FAILED",
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_RETURNED_ERROR",
+    "MARKETA_ADMIN_VENDOR_ACTIVATION_RPC_RESPONSE_INVALID",
+  ]) {
+    assert.equal(activationAction.includes(marker), true, marker)
+  }
+  assert.match(actions, /MARKETA_ADMIN_VENDOR_ACTIVATION_RECONCILIATION_FAILED/)
 })

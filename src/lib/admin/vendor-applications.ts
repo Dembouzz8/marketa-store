@@ -54,6 +54,20 @@ interface InternalApplicationDetail extends Omit<ApplicationDetail, "activation"
   auth_user_id: string | null
 }
 
+class LoggedVendorApplicationReadError extends Error {}
+
+function logAdminVendorApplicationFailure(label: string, error?: unknown) {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : null
+  const boundedCode =
+    typeof code === "string" && /^[a-z0-9_.-]{1,32}$/i.test(code)
+      ? code
+      : null
+  console.error(boundedCode ? `${label} code=${boundedCode}` : label)
+}
+
 async function loadActivationInfo(
   client: ReturnType<typeof createAdminClient>,
   application: InternalApplicationDetail
@@ -108,7 +122,13 @@ async function loadVendorApplication(id: string): Promise<ApplicationDetail | nu
     .select(detailFields)
     .eq("id", id)
     .maybeSingle()
-  if (error) throw new Error()
+  if (error) {
+    logAdminVendorApplicationFailure(
+      "MARKETA_ADMIN_VENDOR_APPLICATION_READ_FAILED",
+      error
+    )
+    throw new LoggedVendorApplicationReadError()
+  }
   if (!data) return null
 
   const application = data as InternalApplicationDetail
@@ -146,7 +166,13 @@ export async function getVendorApplication(id: string) {
   if (!applicationIdPattern.test(id)) return null
   try {
     return await loadVendorApplication(id)
-  } catch {
+  } catch (error) {
+    if (!(error instanceof LoggedVendorApplicationReadError)) {
+      logAdminVendorApplicationFailure(
+        "MARKETA_ADMIN_VENDOR_APPLICATION_LOAD_FAILED",
+        error
+      )
+    }
     throw new Error("Unable to load this application.")
   }
 }
