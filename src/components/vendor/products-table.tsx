@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/use-toast"
-import { supabase } from "@/lib/supabase"
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { cn, formatNaira, getProductImage } from "@/lib/utils"
 import type { Product } from "@/types"
 
@@ -50,6 +50,7 @@ export function ProductsTable({
   onDelete,
   onToggleActive,
 }: ProductsTableProps) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [localProducts, setLocalProducts] = useState(products)
   const [query, setQuery] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)

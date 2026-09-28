@@ -94,11 +94,13 @@ function renderProductsTable(canManage) {
     },
     "@/components/ui/input": { Input: component },
     "@/components/ui/use-toast": { toast: () => {} },
-    "@/lib/supabase": {
-      supabase: {
-        from() {
-          throw new Error("Rendering must not mutate products")
-        },
+    "@/lib/supabase-browser": {
+      createSupabaseBrowserClient() {
+        return {
+          from() {
+            throw new Error("Rendering must not mutate products")
+          },
+        }
       },
     },
     "@/lib/utils": {

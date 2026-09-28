@@ -6,7 +6,7 @@ import { ImagePlus, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/use-toast"
-import { supabase } from "@/lib/supabase"
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { cn } from "@/lib/utils"
 import type { Product } from "@/types"
 
@@ -43,6 +43,7 @@ function getImageExtension(mimeType: string) {
 }
 
 export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [name, setName] = useState(product?.name ?? "")
   const [description, setDescription] = useState(product?.description ?? "")
   const [price, setPrice] = useState(
@@ -148,6 +149,7 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
 
     startTransition(async () => {
       setErrors({})
+      let saveStage: "upload" | "product" = "upload"
 
       try {
         const uploadedImages = await uploadImages()
@@ -166,6 +168,7 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
           is_active: isActive,
         }
 
+        saveStage = "product"
         const { error } = product
           ? await supabase
               .from("products")
@@ -178,9 +181,11 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
 
         toast({ title: product ? "Product updated" : "Product created" })
         await onSuccess()
-      } catch (error) {
+      } catch {
         const message =
-          error instanceof Error ? error.message : "Something went wrong."
+          saveStage === "upload"
+            ? "We couldn't upload the product images. Please try again."
+            : "We couldn't save the product. Please try again."
         setErrors({ form: message })
         toast({
           title: "Could not save product",

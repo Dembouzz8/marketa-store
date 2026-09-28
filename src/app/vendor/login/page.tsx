@@ -1,20 +1,16 @@
 "use client"
 
 import Link from "next/link"
-import { createBrowserClient } from "@supabase/ssr"
 import { Eye, EyeOff, Loader2, Lock, Mail, ShoppingBag } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
-
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 
 export default function VendorLoginPage() {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
