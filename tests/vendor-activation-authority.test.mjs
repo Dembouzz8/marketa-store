@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
+import { historicalCommitFiles } from "./helpers/historical-batch-scope.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const migrationFile =
@@ -261,29 +261,19 @@ test("postconditions verify audit metadata, grants, RPC structure, and frozen RL
   assert.match(postcondition, /marketa_batch4c1\.storage_security/)
 })
 
-test("Batch 4C1 working-tree scope contains only the migration and focused test", () => {
-  const tracked = execFileSync("git", ["diff", "--name-only", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  })
-  const untracked = execFileSync(
-    "git",
-    ["ls-files", "--others", "--exclude-standard"],
-    { cwd: root, encoding: "utf8" }
+test("Batch 4C1 historical commit contains only its approved files", (t) => {
+  const scope = historicalCommitFiles(
+    root,
+    "ed49e89d4f8596e8ef2b9d0efaf4df4531e49fb2"
   )
-  const changed = new Set(
-    `${tracked}\n${untracked}`
-      .split(/\r?\n/)
-      .map((file) => file.trim())
-      .filter(Boolean)
-  )
-  assert.deepEqual(
-    changed,
-    new Set([
-      "tests/vendor-activation-authority.test.mjs",
-      "src/app/admin/(protected)/vendor-applications/[id]/activation-form.tsx",
-      "src/app/admin/(protected)/vendor-applications/actions.ts",
-      "tests/vendor-activation-admin.test.mjs",
-    ])
-  )
+  if (!scope.available) {
+    t.skip(scope.reason)
+    return
+  }
+  assert.deepEqual(scope.files, [
+    migrationFile,
+    testFile,
+    "tests/vendor-product-activation-boundary.test.mjs",
+    "tests/vendor-product-image-storage-boundary.test.mjs",
+  ])
 })

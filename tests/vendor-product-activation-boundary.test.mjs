@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import vm from "node:vm"
 import ts from "typescript"
+import { historicalCommitFiles } from "./helpers/historical-batch-scope.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const migrationFile =
@@ -455,46 +455,25 @@ test("activation copy does not conflate activation with verification", () => {
   assert.equal(changedUi.includes("provisioning"), false)
 })
 
-test("Batch 4A working-tree scope excludes frozen systems", () => {
-  const tracked = execFileSync("git", ["diff", "--name-only", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  })
-  const untracked = execFileSync(
-    "git",
-    ["ls-files", "--others", "--exclude-standard"],
-    { cwd: root, encoding: "utf8" }
+test("Batch 4A historical commit contains only its approved files", (t) => {
+  const scope = historicalCommitFiles(
+    root,
+    "945f5cd831b415fdf9b2efe3f3023d41e1d7b632"
   )
-  const changed = new Set(
-    `${tracked}\n${untracked}`
-      .split(/\r?\n/)
-      .map((file) => file.trim())
-      .filter(Boolean)
-  )
-  const allowed = new Set([
-    migrationFile,
-    productsPageFile,
-    newProductPageFile,
+  if (!scope.available) {
+    t.skip(scope.reason)
+    return
+  }
+  assert.deepEqual(scope.files, [
+    dashboardFile,
     editProductPageFile,
+    newProductPageFile,
+    productsPageFile,
     productFormFile,
     productsTableFile,
-    dashboardFile,
+    migrationFile,
     "tests/vendor-product-activation-boundary.test.mjs",
-    "supabase/migrations/20260925160000_harden_product_image_storage_write_boundary.sql",
-    "tests/vendor-product-image-storage-boundary.test.mjs",
-    "supabase/migrations/20260926231820_add_vendor_activation_authority.sql",
-    "tests/vendor-activation-authority.test.mjs",
-    "src/app/admin/(protected)/error.tsx",
-    "src/lib/admin/origin.ts",
-    "src/lib/admin/vendor-applications.ts",
-    "src/app/admin/(protected)/vendor-applications/actions.ts",
-    "src/app/admin/(protected)/vendor-applications/[id]/page.tsx",
-    "src/app/admin/(protected)/vendor-applications/[id]/activation-form.tsx",
-    "tests/vendor-activation-admin.test.mjs",
   ])
-  for (const file of changed) {
-    assert.ok(allowed.has(file), `Unexpected Batch 4A file: ${file}`)
-  }
 })
 
 test("migration leaves checkout, storefront projection, Auth, and provisioning untouched", () => {

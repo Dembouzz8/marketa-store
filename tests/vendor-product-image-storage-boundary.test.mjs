@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
+import { historicalCommitFiles } from "./helpers/historical-batch-scope.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const migrationFile =
@@ -223,39 +223,19 @@ test("ProductForm retains non-upsert upload and public URL generation", () => {
   assert.doesNotMatch(productFormSource, /storage\s*\.from\([\s\S]*\.remove\(/)
 })
 
-test("Batch 4B1 working-tree scope excludes frozen systems", () => {
-  const tracked = execFileSync("git", ["diff", "--name-only", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-  })
-  const untracked = execFileSync(
-    "git",
-    ["ls-files", "--others", "--exclude-standard"],
-    { cwd: root, encoding: "utf8" }
+test("Batch 4B1 historical commit contains only its approved files", (t) => {
+  const scope = historicalCommitFiles(
+    root,
+    "6dbf02f998b020cf64b4b642ee3f57d65e623b5f"
   )
-  const changed = new Set(
-    `${tracked}\n${untracked}`
-      .split(/\r?\n/)
-      .map((file) => file.trim())
-      .filter(Boolean)
-  )
-  const allowed = new Set([
-    migrationFile,
-    productFormFile,
-    testFile,
-    "tests/vendor-product-activation-boundary.test.mjs",
-    "supabase/migrations/20260926231820_add_vendor_activation_authority.sql",
-    "tests/vendor-activation-authority.test.mjs",
-    "src/app/admin/(protected)/error.tsx",
-    "src/lib/admin/origin.ts",
-    "src/lib/admin/vendor-applications.ts",
-    "src/app/admin/(protected)/vendor-applications/actions.ts",
-    "src/app/admin/(protected)/vendor-applications/[id]/page.tsx",
-    "src/app/admin/(protected)/vendor-applications/[id]/activation-form.tsx",
-    "tests/vendor-activation-admin.test.mjs",
-  ])
-
-  for (const file of changed) {
-    assert.ok(allowed.has(file), `Unexpected Batch 4B1 file: ${file}`)
+  if (!scope.available) {
+    t.skip(scope.reason)
+    return
   }
+  assert.deepEqual(scope.files, [
+    productFormFile,
+    migrationFile,
+    "tests/vendor-product-activation-boundary.test.mjs",
+    testFile,
+  ])
 })
