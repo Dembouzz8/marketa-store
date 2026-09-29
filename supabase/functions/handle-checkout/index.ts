@@ -110,6 +110,17 @@ type TrustedCustomer = {
   phone: string
 }
 
+type ItemFinancialSnapshot = {
+  product_id: string
+  vendor_id: string
+  quantity: number
+  unit_amount_kobo: bigint
+  gross_amount_kobo: bigint
+  platform_fee_bps: bigint
+  platform_fee_amount_kobo: bigint
+  vendor_net_amount_kobo: bigint
+}
+
 type ValidationResult =
   | { ok: true; value: ValidatedCheckout }
   | {
@@ -174,6 +185,100 @@ function normalizeWhitespace(value: string): string {
 function hasLengthBetween(value: string, minimum: number, maximum: number) {
   return value.length >= minimum && value.length <= maximum
 }
+
+// OPS_2B2B_MONEY_HELPERS_START
+const EXACT_DECIMAL_PATTERN = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?$/
+const BASIS_POINTS_DENOMINATOR = 10000n
+const HALF_BASIS_POINT_DENOMINATOR = BASIS_POINTS_DENOMINATOR / 2n
+const MAX_NUMERIC_12_2_KOBO = 999_999_999_999n
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
+
+function parseScaledDecimal(value: unknown, allowZero: boolean): bigint | null {
+  if (typeof value !== "string") return null
+
+  const match = EXACT_DECIMAL_PATTERN.exec(value)
+  if (!match) return null
+
+  try {
+    const whole = BigInt(match[1])
+    const fractional = BigInt((match[2] ?? "").padEnd(2, "0"))
+    const scaled = whole * 100n + fractional
+    return scaled > 0n || (allowZero && scaled === 0n) ? scaled : null
+  } catch {
+    return null
+  }
+}
+
+function parsePriceToKobo(value: unknown): bigint | null {
+  return parseScaledDecimal(value, false)
+}
+
+function parseFeePercentToBps(value: unknown): bigint | null {
+  const basisPoints = parseScaledDecimal(value, true)
+  return basisPoints !== null && basisPoints <= BASIS_POINTS_DENOMINATOR
+    ? basisPoints
+    : null
+}
+
+function calculateItemFinancialSnapshot(
+  unitAmountKobo: bigint,
+  quantity: number,
+  platformFeeBps: bigint
+): Omit<ItemFinancialSnapshot, "product_id" | "vendor_id"> | null {
+  if (
+    unitAmountKobo <= 0n ||
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > MAX_QUANTITY ||
+    platformFeeBps < 0n ||
+    platformFeeBps > BASIS_POINTS_DENOMINATOR
+  ) {
+    return null
+  }
+
+  const grossAmountKobo = unitAmountKobo * BigInt(quantity)
+  const platformFeeAmountKobo =
+    (grossAmountKobo * platformFeeBps + HALF_BASIS_POINT_DENOMINATOR) /
+    BASIS_POINTS_DENOMINATOR
+  const vendorNetAmountKobo = grossAmountKobo - platformFeeAmountKobo
+
+  if (
+    grossAmountKobo <= 0n ||
+    platformFeeAmountKobo < 0n ||
+    platformFeeAmountKobo > grossAmountKobo ||
+    vendorNetAmountKobo < 0n ||
+    grossAmountKobo !== platformFeeAmountKobo + vendorNetAmountKobo
+  ) {
+    return null
+  }
+
+  return {
+    quantity,
+    unit_amount_kobo: unitAmountKobo,
+    gross_amount_kobo: grossAmountKobo,
+    platform_fee_bps: platformFeeBps,
+    platform_fee_amount_kobo: platformFeeAmountKobo,
+    vendor_net_amount_kobo: vendorNetAmountKobo,
+  }
+}
+
+function koboToNairaDecimal(value: bigint): string {
+  const whole = value / 100n
+  const fractional = (value % 100n).toString().padStart(2, "0")
+  return `${whole}.${fractional}`
+}
+
+function isRepresentableNumeric12_2Kobo(value: bigint): boolean {
+  return value > 0n && value <= MAX_NUMERIC_12_2_KOBO
+}
+
+function bigintToSafeNumber(value: bigint): number | null {
+  if (value < 0n || value > MAX_SAFE_INTEGER_BIGINT) return null
+
+  const numberValue = Number(value)
+  return Number.isSafeInteger(numberValue) ? numberValue : null
+}
+// OPS_2B2B_MONEY_HELPERS_END
 
 function parseBearerToken(req: Request): string | null {
   const authorization = req.headers.get("authorization")
@@ -827,7 +932,7 @@ async function handleCheckout(req: Request): Promise<Response> {
   const productIds = items.map((item) => item.product_id)
   const { data: products, error: productsError } = await supabase
     .from("products")
-    .select("id, vendor_id, price, stock, is_active")
+    .select("id, vendor_id, price_text:price::text, stock, is_active")
     .in("id", productIds)
 
   if (productsError || !products) {
@@ -852,13 +957,13 @@ async function handleCheckout(req: Request): Promise<Response> {
   const vendorIds = [
     ...new Set(products.map((product) => String(product.vendor_id))),
   ]
-  const { data: activeVendors, error: vendorsError } = await supabase
-    .from("public_active_vendors")
-    .select("id")
+  const { data: vendors, error: vendorsError } = await supabase
+    .from("vendors")
+    .select("id, is_active, platform_fee_pct_text:platform_fee_pct::text")
     .in("id", vendorIds)
 
-  if (vendorsError || !activeVendors) {
-    logOperationFailure("fetch_active_vendors", "SERVICE_UNAVAILABLE")
+  if (vendorsError || !vendors) {
+    logOperationFailure("fetch_checkout_vendors", "SERVICE_UNAVAILABLE")
     return errorResponse(
       "SERVICE_UNAVAILABLE",
       "Checkout is temporarily unavailable. Please try again.",
@@ -867,10 +972,13 @@ async function handleCheckout(req: Request): Promise<Response> {
     )
   }
 
-  const activeVendorIds = new Set(
-    activeVendors.map((vendor) => String(vendor.id))
+  const vendorMap = new Map(
+    vendors.map((vendor) => [String(vendor.id), vendor])
   )
-  if (vendorIds.some((vendorId) => !activeVendorIds.has(vendorId))) {
+  if (
+    vendorMap.size !== vendorIds.length ||
+    vendorIds.some((vendorId) => vendorMap.get(vendorId)?.is_active !== true)
+  ) {
     return errorResponse(
       "VENDOR_UNAVAILABLE",
       "One or more sellers are currently unavailable.",
@@ -878,14 +986,24 @@ async function handleCheckout(req: Request): Promise<Response> {
     )
   }
 
-  const validatedItems: Array<{
-    product_id: string
-    vendor_id: string
-    quantity: number
-    unit_price: number
-    subtotal: number
-  }> = []
-  let totalKobo = 0
+  const vendorFeeBps = new Map<string, bigint>()
+  for (const vendorId of vendorIds) {
+    const basisPoints = parseFeePercentToBps(
+      vendorMap.get(vendorId)?.platform_fee_pct_text
+    )
+    if (basisPoints === null) {
+      logOperationFailure("validate_vendor_fee", "VENDOR_UNAVAILABLE")
+      return errorResponse(
+        "VENDOR_UNAVAILABLE",
+        "One or more sellers are currently unavailable.",
+        409
+      )
+    }
+    vendorFeeBps.set(vendorId, basisPoints)
+  }
+
+  const validatedItems: ItemFinancialSnapshot[] = []
+  let totalKobo = 0n
 
   for (const cartItem of items) {
     const product = productMap.get(cartItem.product_id)
@@ -906,17 +1024,17 @@ async function handleCheckout(req: Request): Promise<Response> {
       )
     }
 
-    const unitPrice = Number(product.price)
-    const unitPriceKobo = Math.round(unitPrice * 100)
-    const subtotalKobo = unitPriceKobo * cartItem.quantity
-    if (
-      !Number.isFinite(unitPrice) ||
-      unitPrice <= 0 ||
-      !Number.isSafeInteger(unitPriceKobo) ||
-      unitPriceKobo <= 0 ||
-      !Number.isSafeInteger(subtotalKobo) ||
-      subtotalKobo <= 0
-    ) {
+    const unitAmountKobo = parsePriceToKobo(product.price_text)
+    const platformFeeBps = vendorFeeBps.get(String(product.vendor_id))
+    const snapshot =
+      unitAmountKobo !== null && platformFeeBps !== undefined
+        ? calculateItemFinancialSnapshot(
+            unitAmountKobo,
+            cartItem.quantity,
+            platformFeeBps
+          )
+        : null
+    if (!snapshot) {
       logOperationFailure("validate_product_price", "INVALID_PRODUCT_PRICE")
       return errorResponse(
         "INVALID_PRODUCT_PRICE",
@@ -925,26 +1043,17 @@ async function handleCheckout(req: Request): Promise<Response> {
       )
     }
 
-    totalKobo += subtotalKobo
-    if (!Number.isSafeInteger(totalKobo) || totalKobo <= 0) {
-      logOperationFailure("calculate_order_total", "INVALID_PRODUCT_PRICE")
-      return errorResponse(
-        "INVALID_PRODUCT_PRICE",
-        "The order total cannot currently be processed.",
-        422
-      )
-    }
+    totalKobo += snapshot.gross_amount_kobo
 
     validatedItems.push({
       product_id: product.id,
       vendor_id: product.vendor_id,
-      quantity: cartItem.quantity,
-      unit_price: unitPriceKobo / 100,
-      subtotal: subtotalKobo / 100,
+      ...snapshot,
     })
   }
 
-  if (!Number.isSafeInteger(totalKobo) || totalKobo <= 0) {
+  const paystackAmount = bigintToSafeNumber(totalKobo)
+  if (!isRepresentableNumeric12_2Kobo(totalKobo) || paystackAmount === null) {
     logOperationFailure("validate_order_total", "INVALID_PRODUCT_PRICE")
     return errorResponse(
       "INVALID_PRODUCT_PRICE",
@@ -963,7 +1072,10 @@ async function handleCheckout(req: Request): Promise<Response> {
       customer_email: customerEmail,
       customer_phone: customerPhone,
       status: "pending",
-      total_amount: totalKobo / 100,
+      total_amount: koboToNairaDecimal(totalKobo),
+      total_amount_kobo: totalKobo.toString(),
+      currency: "NGN",
+      financial_contract_version: 2,
       idempotency_key: idempotencyKey,
       shipping_address: shippingAddress,
     })
@@ -1044,7 +1156,18 @@ async function handleCheckout(req: Request): Promise<Response> {
 
   const orderItems = validatedItems.map((item) => ({
     order_id: orderId,
-    ...item,
+    product_id: item.product_id,
+    vendor_id: item.vendor_id,
+    quantity: item.quantity,
+    unit_price: koboToNairaDecimal(item.unit_amount_kobo),
+    subtotal: koboToNairaDecimal(item.gross_amount_kobo),
+    unit_amount_kobo: item.unit_amount_kobo.toString(),
+    gross_amount_kobo: item.gross_amount_kobo.toString(),
+    platform_fee_bps: item.platform_fee_bps.toString(),
+    platform_fee_amount_kobo: item.platform_fee_amount_kobo.toString(),
+    vendor_net_amount_kobo: item.vendor_net_amount_kobo.toString(),
+    currency: "NGN",
+    financial_contract_version: 2,
   }))
   const { error: itemsError } = await supabase
     .from("order_items")
@@ -1078,7 +1201,8 @@ async function handleCheckout(req: Request): Promise<Response> {
         },
         body: JSON.stringify({
           email: customerEmail,
-          amount: totalKobo,
+          amount: paystackAmount,
+          currency: "NGN",
           callback_url: callbackUrl.toString(),
           metadata: {
             order_id: orderId,
