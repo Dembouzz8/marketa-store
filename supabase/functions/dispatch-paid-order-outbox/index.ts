@@ -53,6 +53,16 @@ export type EmailDeliveryCommand =
       }>
     }
 
+type PreparedEmailDeliveryCommand =
+  | Omit<
+      Extract<EmailDeliveryCommand, { recipientKind: "customer" }>,
+      "idempotencyKey"
+    >
+  | Omit<
+      Extract<EmailDeliveryCommand, { recipientKind: "vendor" }>,
+      "idempotencyKey"
+    >
+
 export type EmailDeliveryResult =
   | { outcome: "DELIVERED"; providerMessageId?: string }
   | { outcome: "RETRYABLE_FAILURE"; diagnosticCode: string }
@@ -578,12 +588,11 @@ async function loadAuthoritativeData(
 function commandForChild(
   child: DeliveryChild,
   data: AuthoritativeData
-): EmailDeliveryCommand | null {
+): PreparedEmailDeliveryCommand | null {
   if (child.recipientKind === "customer") {
     return {
       recipientKind: "customer",
       to: data.order.customerEmail,
-      idempotencyKey: child.deliveryKey,
       orderId: data.order.id,
       totalAmountKobo: data.order.totalAmountKobo.toString(),
       currency: data.order.currency,
@@ -600,7 +609,6 @@ function commandForChild(
   return {
     recipientKind: "vendor",
     to: vendor.email,
-    idempotencyKey: child.deliveryKey,
     orderId: data.order.id,
     vendor: { id: vendor.id, name: vendor.name },
     items: data.items
@@ -630,6 +638,15 @@ function parseAttempt(data: unknown, child: DeliveryChild) {
     return null
   }
   return { token: row.attempt_token, count: row.attempt_count }
+}
+
+function providerAttemptIdempotencyKey(
+  deliveryKey: string,
+  attemptCount: number
+): string | null {
+  if (!isInteger(attemptCount, 1, 12)) return null
+  const key = `${deliveryKey}:attempt:${attemptCount}`
+  return key.length >= 1 && key.length <= 256 ? key : null
 }
 
 async function acknowledgeUnknown(
@@ -724,10 +741,11 @@ export async function dispatchOnePaidOrder(
 
   for (const child of children) {
     if (child.status !== "pending") continue
-    const command = commandForChild(child, authoritative.value)
-    if (!command) {
+    const preparedCommand = commandForChild(child, authoritative.value)
+    if (!preparedCommand) {
       return failParent(client, parent, "DELIVERY_DATA_INVALID", log)
     }
+    const recipientIsValid = validEmail(preparedCommand.to)
 
     const begin = await safeRpc(client, "begin_paid_order_notification_delivery", {
       p_outbox_event_id: parent.eventId,
@@ -738,7 +756,7 @@ export async function dispatchOnePaidOrder(
     const attempt = begin && !begin.error ? parseAttempt(begin.data, child) : null
     if (!attempt) return { result: "PARENT_LEASE_LOST" }
 
-    if (!validEmail(command.to)) {
+    if (!recipientIsValid) {
       const failed = await safeRpc(client, "mark_paid_order_notification_failed", {
         p_outbox_event_id: parent.eventId,
         p_parent_lease_token: parent.leaseToken,
@@ -752,6 +770,30 @@ export async function dispatchOnePaidOrder(
       }
       log("MARKETA_DISPATCH_CHILD_BLOCKED")
       return failParent(client, parent, "CHILD_DELIVERY_BLOCKED", log)
+    }
+
+    const idempotencyKey = providerAttemptIdempotencyKey(
+      child.deliveryKey,
+      attempt.count
+    )
+    if (!idempotencyKey) {
+      const failed = await safeRpc(client, "mark_paid_order_notification_failed", {
+        p_outbox_event_id: parent.eventId,
+        p_parent_lease_token: parent.leaseToken,
+        p_delivery_id: child.id,
+        p_attempt_token: attempt.token,
+        p_error_code: "DELIVERY_DATA_INVALID",
+        p_permanent: true,
+      })
+      if (!failed || failed.error || !oneRow(failed.data)) {
+        return { result: "PARENT_LEASE_LOST" }
+      }
+      log("MARKETA_DISPATCH_CHILD_BLOCKED")
+      return failParent(client, parent, "CHILD_DELIVERY_BLOCKED", log)
+    }
+    const command: EmailDeliveryCommand = {
+      ...preparedCommand,
+      idempotencyKey,
     }
 
     let outcome: EmailDeliveryResult

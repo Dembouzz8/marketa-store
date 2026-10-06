@@ -22,6 +22,7 @@ const vendorId = "66666666-6666-4666-8666-666666666666"
 const productId = "77777777-7777-4777-8777-777777777777"
 const customerAttemptToken = "88888888-8888-4888-8888-888888888888"
 const vendorAttemptToken = "99999999-9999-4999-8999-999999999999"
+const secondAttemptToken = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 const dispatcherSecret = "dispatcher-test-secret-32-characters!"
 
 function child(kind, status = "pending") {
@@ -162,6 +163,7 @@ function createMode(overrides = {}) {
           (entry) => entry.id === parameters.p_delivery_id
         )
         if (!delivery) return { data: [], error: null }
+        const attemptCount = delivery.attempt_count + 1
         return {
           data: [
             {
@@ -169,9 +171,11 @@ function createMode(overrides = {}) {
               delivery_key: delivery.delivery_key,
               recipient_kind: delivery.recipient_kind,
               vendor_id: delivery.vendor_id,
-              attempt_count: 1,
+              attempt_count: attemptCount,
               attempt_token:
-                delivery.recipient_kind === "customer"
+                attemptCount === 2
+                  ? secondAttemptToken
+                  : delivery.recipient_kind === "customer"
                   ? customerAttemptToken
                   : vendorAttemptToken,
             },
@@ -858,14 +862,55 @@ test("begin attempt uses the adapter provider name", async () => {
   )
 })
 
-test("adapter receives the deterministic child delivery key", async () => {
+test("adapter receives the deterministic child attempt idempotency key", async () => {
   const mode = createMode()
   const adapter = createAdapter()
   await invokeCore(mode, adapter)
-  assert.equal(adapter.calls[0].idempotencyKey, `paid-order:${orderId}:customer:email`)
+  assert.equal(
+    adapter.calls[0].idempotencyKey,
+    `paid-order:${orderId}:customer:email:attempt:1`
+  )
   assert.equal(
     adapter.calls[1].idempotencyKey,
-    `paid-order:${orderId}:vendor:${vendorId}:email`
+    `paid-order:${orderId}:vendor:${vendorId}:email:attempt:1`
+  )
+  assert.ok(adapter.calls.every(({ idempotencyKey }) => idempotencyKey.length <= 256))
+})
+
+test("the same persisted child attempt derives the same provider key", async () => {
+  const first = await invokeCore(createMode(), createAdapter())
+  const second = await invokeCore(createMode(), createAdapter())
+  assert.deepEqual(
+    first.adapter.calls.map(({ idempotencyKey }) => idempotencyKey),
+    second.adapter.calls.map(({ idempotencyKey }) => idempotencyKey)
+  )
+})
+
+test("a definitive retryable failure permits a distinct later attempt key", async () => {
+  const mode = createMode()
+  const adapter = createAdapter([
+    { outcome: "RETRYABLE_FAILURE", diagnosticCode: "DELIVERY_TIMEOUT" },
+    { outcome: "DELIVERED", providerMessageId: "provider-message-two" },
+  ])
+
+  await invokeCore(mode, adapter)
+  mode.tableData.notification_deliveries[0].attempt_count = 1
+  await invokeCore(mode, adapter)
+
+  const customerKeys = adapter.calls
+    .filter(({ recipientKind }) => recipientKind === "customer")
+    .map(({ idempotencyKey }) => idempotencyKey)
+  assert.deepEqual(
+    customerKeys,
+    [
+      `paid-order:${orderId}:customer:email:attempt:1`,
+      `paid-order:${orderId}:customer:email:attempt:2`,
+    ]
+  )
+  assert.notEqual(customerKeys[0], customerKeys[1])
+  assert.doesNotMatch(
+    JSON.stringify(adapter.calls),
+    new RegExp(`${customerAttemptToken}|${secondAttemptToken}`)
   )
 })
 
@@ -930,6 +975,26 @@ test("UNKNOWN adapter result calls unknown lifecycle RPC", async () => {
   assert.equal(unknown.parameters.p_error_code, "PROVIDER_ACCEPTANCE_UNKNOWN")
 })
 
+test("UNKNOWN delivery evidence prevents a later provider attempt", async () => {
+  const mode = createMode()
+  const adapter = createAdapter([
+    { outcome: "UNKNOWN", diagnosticCode: "PROVIDER_ACCEPTANCE_UNKNOWN" },
+    { outcome: "DELIVERED", providerMessageId: "must-not-send" },
+  ])
+
+  await invokeCore(mode, adapter)
+  mode.tableData.notification_deliveries[0] = child("customer", "unknown")
+  await invokeCore(mode, adapter)
+
+  assert.equal(adapter.calls.length, 1)
+  assert.equal(
+    mode.rpcCalls.filter(
+      ({ name }) => name === "begin_paid_order_notification_delivery"
+    ).length,
+    1
+  )
+})
+
 test("thrown adapter error becomes UNKNOWN and never pending", async () => {
   const mode = createMode()
   const adapter = createAdapter([new Error("private provider failure")])
@@ -964,6 +1029,20 @@ test("provider success with failed database acknowledgement never resends", asyn
   const { result, adapter } = await invokeCore(mode)
   assert.equal(result.result, "CHILD_ACK_UNCERTAIN")
   assert.equal(adapter.calls.length, 1)
+  mode.tableData.notification_deliveries[0] = child("customer", "processing")
+  await invokeCore(mode, adapter)
+  assert.equal(
+    adapter.calls.filter(({ recipientKind }) => recipientKind === "customer").length,
+    1
+  )
+  assert.equal(
+    mode.rpcCalls.filter(
+      ({ name, parameters }) =>
+        name === "begin_paid_order_notification_delivery" &&
+        parameters.p_delivery_id === customerChildId
+    ).length,
+    1
+  )
   assert.equal(
     mode.rpcCalls.some((call) => call.name === "mark_paid_order_outbox_failed"),
     false
@@ -1073,6 +1152,16 @@ test("controlled logs contain fixed markers only", async () => {
   assert.ok(mode.logs.every((entry) => /^MARKETA_DISPATCH_[A-Z_]+$/.test(entry[0])))
 })
 
+test("provider attempt idempotency keys are absent from logs and HTTP responses", async () => {
+  const mode = createMode()
+  const adapter = createAdapter()
+  const { body } = await invokeHttp(mode, adapter)
+  const providerKey = `paid-order:${orderId}:customer:email:attempt:1`
+  assert.equal(adapter.calls[0].idempotencyKey, providerKey)
+  assert.equal(JSON.stringify(mode.logs).includes(providerKey), false)
+  assert.equal(JSON.stringify(body).includes(providerKey), false)
+})
+
 test("HTTP responses exclude PII secrets and identifiers", async () => {
   const mode = createMode()
   mode.rpcHandlers.claim_paid_order_outbox = () => ({
@@ -1139,6 +1228,16 @@ test("provider success acknowledgement failure preserves processing evidence", (
   assert.match(deliveredBranch, /CHILD_ACK_UNCERTAIN/)
   assert.doesNotMatch(deliveredBranch, /mark_paid_order_notification_failed/)
   assert.doesNotMatch(deliveredBranch, /mark_paid_order_notification_unknown/)
+})
+
+test("provider key uses only the delivery key and persisted attempt count", () => {
+  const keyBuilder = source.slice(
+    source.indexOf("function providerAttemptIdempotencyKey"),
+    source.indexOf("async function acknowledgeUnknown")
+  )
+  assert.match(keyBuilder, /`\$\{deliveryKey\}:attempt:\$\{attemptCount\}`/)
+  assert.match(keyBuilder, /key\.length >= 1 && key\.length <= 256/)
+  assert.doesNotMatch(keyBuilder, /attemptToken|attempt_token|randomUUID|crypto\./)
 })
 
 test("core never reclaims inside one invocation", () => {
