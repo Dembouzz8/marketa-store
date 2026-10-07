@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
+import { createProductionEmailAdapter } from "./resend-adapter.ts"
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -9,6 +10,8 @@ const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/
 const CURRENCY_PATTERN = /^[A-Z]{3}$/
 const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/
+const DISPATCH_PROCESSING_BUDGET_MS = 90_000
+const CHILD_ATTEMPT_RESERVE_MS = 10_000
 
 type DatabaseResult = { data: unknown; error: unknown }
 type DispatcherClient = SupabaseClient
@@ -140,7 +143,11 @@ type RuntimeDependencies = {
   getEnv(name: string): string | undefined
   createServiceClient(url: string, key: string): DispatcherClient
   emailAdapter: EmailAdapter | null
+  createEmailAdapter?: (
+    getEnv: (name: string) => string | undefined
+  ) => EmailAdapter | null
   createWorkerId(): string
+  now?(): number
   log(marker: LogMarker): void
 }
 
@@ -670,8 +677,16 @@ export async function dispatchOnePaidOrder(
   client: DispatcherClient,
   adapter: EmailAdapter,
   workerId: string,
-  log: (marker: LogMarker) => void = (marker) => console.error(marker)
+  log: (marker: LogMarker) => void = (marker) => console.error(marker),
+  now: () => number = () => Date.now()
 ): Promise<DispatchResult> {
+  let startedAt: number
+  try {
+    startedAt = now()
+  } catch {
+    log("MARKETA_DISPATCH_CONFIG_MISSING")
+    return { result: "CLAIM_FAILED" }
+  }
   if (!PROVIDER_PATTERN.test(adapter.providerName) || !PROVIDER_PATTERN.test(workerId)) {
     log("MARKETA_DISPATCH_CONFIG_MISSING")
     return { result: "CLAIM_FAILED" }
@@ -746,6 +761,16 @@ export async function dispatchOnePaidOrder(
       return failParent(client, parent, "DELIVERY_DATA_INVALID", log)
     }
     const recipientIsValid = validEmail(preparedCommand.to)
+
+    let remainingBudget: number
+    try {
+      remainingBudget = DISPATCH_PROCESSING_BUDGET_MS - (now() - startedAt)
+    } catch {
+      remainingBudget = -1
+    }
+    if (!Number.isFinite(remainingBudget) || remainingBudget < CHILD_ATTEMPT_RESERVE_MS) {
+      return failParent(client, parent, "DISPATCH_TIME_BUDGET", log)
+    }
 
     const begin = await safeRpc(client, "begin_paid_order_notification_delivery", {
       p_outbox_event_id: parent.eventId,
@@ -951,7 +976,6 @@ function response(status: number, body: Record<string, unknown>): Response {
 
 // Ops 3C1D deployment contract: use verify_jwt=false because this endpoint
 // authenticates each request with its own MARKETA_DISPATCHER_SECRET bearer value.
-const productionEmailAdapter: EmailAdapter | null = null
 const productionDependencies: RuntimeDependencies = {
   getEnv: (name) => Deno.env.get(name),
   createServiceClient: (url, key) =>
@@ -962,8 +986,10 @@ const productionDependencies: RuntimeDependencies = {
         detectSessionInUrl: false,
       },
     }),
-  emailAdapter: productionEmailAdapter,
+  emailAdapter: null,
+  createEmailAdapter: (getEnv) => createProductionEmailAdapter(getEnv, fetch),
   createWorkerId: () => `edge-${crypto.randomUUID()}`,
+  now: () => Date.now(),
   log: (marker) => console.error(marker),
 }
 
@@ -987,7 +1013,15 @@ export async function handleDispatcherRequest(
     return response(401, { ok: false, code: "AUTH_REQUIRED" })
   }
 
-  if (!dependencies.emailAdapter) {
+  let emailAdapter = dependencies.emailAdapter
+  if (!emailAdapter && dependencies.createEmailAdapter) {
+    try {
+      emailAdapter = dependencies.createEmailAdapter(dependencies.getEnv)
+    } catch {
+      emailAdapter = null
+    }
+  }
+  if (!emailAdapter) {
     dependencies.log("MARKETA_DISPATCH_CONFIG_MISSING")
     return response(503, {
       ok: false,
@@ -1012,9 +1046,10 @@ export async function handleDispatcherRequest(
 
   const result = await dispatchOnePaidOrder(
     client,
-    dependencies.emailAdapter,
+    emailAdapter,
     dependencies.createWorkerId(),
-    dependencies.log
+    dependencies.log,
+    dependencies.now
   )
   if (result.result === "NO_WORK") {
     return response(200, { ok: true, result: "NO_WORK" })

@@ -55,6 +55,8 @@ function createMode(overrides = {}) {
     clientCreations: [],
     logs: [],
     fetchCalls: [],
+    providerFactoryCalls: 0,
+    productionAdapter: null,
     rpcHandlers: {},
     tableErrors: {},
     tableThrows: new Set(),
@@ -302,6 +304,10 @@ vm.runInNewContext(
     TextEncoder,
     Uint8Array,
     URL,
+    fetch(...parameters) {
+      activeMode.fetchCalls.push(parameters)
+      throw new Error("Real provider fetch is forbidden")
+    },
     crypto: webcrypto,
     console: {
       error(...values) {
@@ -328,6 +334,17 @@ vm.runInNewContext(
           createClient(url, key, options) {
             activeMode.clientCreations.push({ url, key, options })
             return activeMode.client
+          },
+        }
+      }
+      if (name === "./resend-adapter.ts") {
+        return {
+          createProductionEmailAdapter(getEnv) {
+            activeMode.providerFactoryCalls += 1
+            return getEnv("RESEND_API_KEY") === "re_test_configured_key" &&
+                getEnv("MARKETA_EMAIL_FROM") === "orders@marketa.example"
+              ? activeMode.productionAdapter
+              : null
           },
         }
       }
@@ -388,13 +405,14 @@ async function invokeHttp(mode, adapter, options) {
   return { response, body: await response.json() }
 }
 
-async function invokeCore(mode, adapter = createAdapter()) {
+async function invokeCore(mode, adapter = createAdapter(), now) {
   activeMode = mode
   const result = await dispatchOnePaidOrder(
     mode.client,
     adapter,
     "edge-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    (marker) => mode.logs.push([marker])
+    (marker) => mode.logs.push([marker]),
+    now
   )
   return { result, mode, adapter }
 }
@@ -501,6 +519,7 @@ test("valid strong configured secret proceeds to the provider gate", async () =>
   assert.deepEqual(mode.logs, [["MARKETA_DISPATCH_CONFIG_MISSING"]])
   assert.equal(mode.clientCreations.length, 0)
   assert.equal(mode.rpcCalls.length, 0)
+  assert.equal(mode.providerFactoryCalls, 1)
 })
 
 test("missing authorization returns 401", async () => {
@@ -526,6 +545,7 @@ test("invalid authorization returns 401", async () => {
   assert.deepEqual(mode.logs, [["MARKETA_DISPATCH_AUTH_FAILED"]])
   assert.equal(mode.clientCreations.length, 0)
   assert.equal(mode.rpcCalls.length, 0)
+  assert.equal(mode.providerFactoryCalls, 0)
 })
 
 test("authentication comparison uses Web Crypto digest comparison", () => {
@@ -545,9 +565,16 @@ test("future deployment disables platform JWT verification for bearer authentica
   assert.match(source, /MARKETA_DISPATCHER_SECRET bearer value/)
 })
 
-test("production has no concrete email provider", () => {
-  assert.match(source, /const productionEmailAdapter: EmailAdapter \| null = null/)
-  assert.doesNotMatch(source, /resend|sendgrid|mailgun|postmark|ses\b/i)
+test("production creates the Resend adapter after dispatcher authentication", () => {
+  assert.match(source, /createProductionEmailAdapter/)
+  assert.match(source, /createEmailAdapter: \(getEnv\) =>/)
+  assert.match(source, /RESEND_API_KEY|createProductionEmailAdapter/)
+  const authenticatedFactory = source.indexOf(
+    "emailAdapter = dependencies.createEmailAdapter"
+  )
+  const serviceClient = source.indexOf("dependencies.createServiceClient")
+  assert.ok(authenticatedFactory > source.indexOf("timingSafeEqual"))
+  assert.ok(authenticatedFactory < serviceClient)
 })
 
 test("provider absence returns 503 with the fixed code", async () => {
@@ -566,6 +593,30 @@ test("provider absence returns before client creation and claim", async () => {
   assert.equal(mode.clientCreations.length, 0)
   assert.equal(mode.rpcCalls.length, 0)
   assert.equal(mode.tableCalls.length, 0)
+})
+
+test("valid provider configuration enables the normal production core flow", async () => {
+  const mode = createMode({
+    env: {
+      MARKETA_DISPATCHER_SECRET: dispatcherSecret,
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+      RESEND_API_KEY: "re_test_configured_key",
+      MARKETA_EMAIL_FROM: "orders@marketa.example",
+    },
+  })
+  mode.productionAdapter = createAdapter()
+  mode.productionAdapter.providerName = "resend"
+  const { response, body } = await invokeProduction(mode)
+  assert.equal(response.status, 200)
+  assert.deepEqual(body, { ok: true, result: "DELIVERED", parents_processed: 1 })
+  assert.equal(mode.providerFactoryCalls, 1)
+  assert.equal(mode.clientCreations.length, 1)
+  assert.equal(mode.productionAdapter.calls.length, 2)
+  assert.equal(
+    mode.productionAdapter.calls[0].idempotencyKey,
+    `paid-order:${orderId}:customer:email:attempt:1`
+  )
 })
 
 test("claim batch size is fixed at one", async () => {
@@ -850,6 +901,49 @@ test("valid pending child begins exactly one attempt", async () => {
   assert.equal(new Set(begins.map((call) => call.parameters.p_delivery_id)).size, 2)
 })
 
+test("time budget exhaustion fails the parent before a child begin or provider call", async () => {
+  const mode = createMode()
+  const adapter = createAdapter()
+  const times = [0, 80_001]
+  const { result } = await invokeCore(
+    mode,
+    adapter,
+    () => times.shift() ?? 80_001
+  )
+  assert.equal(result.result, "PARENT_RETRY_SCHEDULED")
+  assert.equal(result.code, "DISPATCH_TIME_BUDGET")
+  assert.equal(adapter.calls.length, 0)
+  assert.equal(
+    mode.rpcCalls.some(
+      ({ name }) => name === "begin_paid_order_notification_delivery"
+    ),
+    false
+  )
+  assert.equal(mode.rpcCalls.at(-1).name, "mark_paid_order_outbox_failed")
+  assert.equal(mode.rpcCalls.at(-1).parameters.p_error_code, "DISPATCH_TIME_BUDGET")
+})
+
+test("time budget is rechecked before every later pending child", async () => {
+  const mode = createMode()
+  const adapter = createAdapter()
+  const times = [0, 0, 80_001]
+  const { result } = await invokeCore(
+    mode,
+    adapter,
+    () => times.shift() ?? 80_001
+  )
+  assert.equal(result.result, "PARENT_RETRY_SCHEDULED")
+  assert.equal(result.code, "DISPATCH_TIME_BUDGET")
+  assert.equal(adapter.calls.length, 1)
+  assert.equal(
+    mode.rpcCalls.filter(
+      ({ name }) => name === "begin_paid_order_notification_delivery"
+    ).length,
+    1
+  )
+  assert.equal(mode.rpcCalls.at(-1).parameters.p_error_code, "DISPATCH_TIME_BUDGET")
+})
+
 test("begin attempt uses the adapter provider name", async () => {
   const mode = createMode()
   const adapter = createAdapter()
@@ -937,6 +1031,27 @@ test("retryable adapter failure uses permanent false", async () => {
   assert.equal(failure.parameters.p_error_code, "DELIVERY_TIMEOUT")
 })
 
+test("Resend credential configuration failures remain retryable child failures", async () => {
+  for (const diagnosticCode of ["RESEND_UNAUTHORIZED", "RESEND_FORBIDDEN"]) {
+    const mode = createMode()
+    const adapter = createAdapter([
+      { outcome: "RETRYABLE_FAILURE", diagnosticCode },
+    ])
+    await invokeCore(mode, adapter)
+    const failure = mode.rpcCalls.find(
+      (call) => call.name === "mark_paid_order_notification_failed"
+    )
+    assert.equal(failure.parameters.p_error_code, diagnosticCode)
+    assert.equal(failure.parameters.p_permanent, false)
+    assert.equal(
+      mode.rpcCalls.some(
+        (call) => call.name === "mark_paid_order_notification_unknown"
+      ),
+      false
+    )
+  }
+})
+
 test("permanent adapter failure uses permanent true", async () => {
   const mode = createMode()
   const adapter = createAdapter([
@@ -975,10 +1090,10 @@ test("UNKNOWN adapter result calls unknown lifecycle RPC", async () => {
   assert.equal(unknown.parameters.p_error_code, "PROVIDER_ACCEPTANCE_UNKNOWN")
 })
 
-test("UNKNOWN delivery evidence prevents a later provider attempt", async () => {
+test("UNKNOWN HTTP 408 evidence prevents a later provider attempt", async () => {
   const mode = createMode()
   const adapter = createAdapter([
-    { outcome: "UNKNOWN", diagnosticCode: "PROVIDER_ACCEPTANCE_UNKNOWN" },
+    { outcome: "UNKNOWN", diagnosticCode: "RESEND_REQUEST_UNCERTAIN" },
     { outcome: "DELIVERED", providerMessageId: "must-not-send" },
   ])
 
@@ -1182,6 +1297,7 @@ test("successful delivered HTTP response contains only count and fixed result", 
     result: "DELIVERED",
     parents_processed: 1,
   })
+  assert.doesNotMatch(JSON.stringify(body), /message-[0-9]+/)
 })
 
 test("HTTP endpoint never accepts a caller service-role credential field", async () => {
