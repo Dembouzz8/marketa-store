@@ -1,23 +1,23 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-09-28. Recheck the repository, linked migrations, and live
+Snapshot: 2026-10-07. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `9727fc76f86cf33d2ad7310566e99b6cea1464d6`
-  (`stabilize historical batch scope tests`).
+- HEAD: `8df703004b174678329db186d20a530359f50145`
+  (`add paid order Resend delivery adapter`).
 - Local `origin/main`: the same commit.
 - The working tree was clean before this documentation update. This batch
   changes only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`.
-- The repository and linked database contain 17 applied migrations through
-  `20260926231820_add_vendor_activation_authority.sql`.
-- The current Vercel production deployment is READY from `9727fc7`. That
-  commit changes test harnesses only. The seller-activation runtime fix is
-  `6c79fa15545a269061ff242347f7c146166209a3`
-  (`fix seller activation server action exports`).
+- The repository and linked database contain 23 applied migrations through
+  `20260930194732_add_paid_order_notification_delivery_ledger.sql`.
+- Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
+  `payment-status`, `initiate-vendor-provisioning`, and
+  `dispatch-paid-order-outbox`. The dispatcher is active with
+  `verify_jwt=false` and performs its own bearer authentication.
 
 ## Current product state
 
@@ -38,6 +38,12 @@ boundaries, and protected admin seller activation are production validated
 through Batch 4C. Approval, provisioning, activation, and verification remain
 separate states. Activation allows an approved and provisioned seller to sell;
 it does not confer verification.
+
+Atomic payment finalization, the durable paid-order outbox, the notification
+delivery ledger, the provider-neutral dispatcher, and the direct Resend
+adapter are implemented. Real paid-order delivery is paused only at the sender
+enablement boundary described below; that pause does not block independent
+Marketa operations work.
 
 ## Vendor provisioning status
 
@@ -319,6 +325,178 @@ The hosted Supabase Recovery template constructs the scanner-safe link from
 `{{ .RedirectTo }}` and `{{ .TokenHash }}`, with `type=recovery`, rather than
 using a one-use verification URL directly.
 
+## Paid-order operations checkpoint
+
+### Completed Ops 3 implementation
+
+- **Ops 3B1 — COMPLETE/APPLIED:** durable `paid_order` parent outbox.
+- **Ops 3B2 — COMPLETE/APPLIED:** atomic paid-order producer inside the
+  payment-finalization transaction.
+- **Ops 3C1B — COMPLETE/APPLIED:** notification delivery child ledger.
+- **Ops 3C1C — COMPLETE:** provider-neutral dispatcher core.
+- **Ops 3C1C.1 — COMPLETE:** provider idempotency is scoped to each persisted
+  child delivery attempt.
+- **Ops 3C1D — COMPLETE:** direct Resend adapter, customer renderer, vendor
+  renderer, bounded provider timeout, conservative provider outcome
+  classification, dispatcher processing budget, and focused tests.
+
+Payment finalization and notification delivery are separate authorities:
+
+`Paystack/webhook/finalizer -> authoritative financial finalization`
+`-> durable paid_order outbox event`
+
+`paid_order outbox -> Marketa dispatcher -> notification delivery ledger`
+`-> transactional provider`
+
+The dispatcher is not payment authority. Missing sender configuration,
+provider failure, or email delivery failure does not roll back or block a
+completed financial finalization.
+
+### Ops 3C1D runtime readiness
+
+- `dispatch-paid-order-outbox` is deployed and `ACTIVE`.
+- JWT gateway verification is disabled intentionally; the function validates
+  its own `MARKETA_DISPATCHER_SECRET` bearer credential.
+- `MARKETA_DISPATCHER_SECRET` is configured. No value is recorded here.
+- Unsupported-method, missing-auth, wrong-auth, and valid-auth/provider-disabled
+  gates were proven in production.
+- The valid-auth provider-disabled request returned
+  `DELIVERY_PROVIDER_NOT_CONFIGURED` before service-role client creation or a
+  parent claim.
+- The dispatcher has sent no paid-order email.
+
+The sanitized live checkpoint is:
+
+- 23 migrations are applied; the latest is `20260930194732`.
+- Exactly one `paid_order` parent remains `pending` at attempt count zero.
+- The parent has no active lease, and no parent is processing.
+- `notification_deliveries` contains zero rows.
+- `pg_cron` and `pg_net` are absent, and no scheduler is installed.
+
+Do not record the order ID, event ID, payment reference, recipient addresses,
+or any dispatcher/provider secret in repository documentation.
+
+### Provider pause and sender decision
+
+Ops 3 is **PAUSED**, with reason `VERIFIED_SENDING_DOMAIN_REQUIRED`.
+
+- `RESEND_API_KEY` is intentionally not configured for the dispatcher.
+- `MARKETA_EMAIL_FROM` is intentionally not configured.
+- The connected Resend account has no verified Marketa-controlled sending
+  domain and no established production direct-send identity.
+- Resend's onboarding/default test sender must not be treated as a production
+  sender.
+- `dantesportsacademy.com` must not be used or depended on for Marketa
+  notifications because Marketa does not control that domain's DNS.
+- A future sender must use a Marketa-controlled domain. Once one is available,
+  verify it in Resend and create/configure the dedicated dispatcher sending
+  credential without reusing or changing the Supabase Auth SMTP credential.
+
+Seller invitation and paid-order email remain distinct systems:
+
+`application -> Supabase Auth inviteUserByEmail -> Auth-managed delivery`
+
+`paid_order outbox -> dispatch-paid-order-outbox -> direct provider adapter`
+
+Successful Auth-managed seller invitation delivery does not prove that the
+paid-order dispatcher can use the same sender. Do not redesign seller
+invitation email as part of the notification-domain pause.
+
+### n8n transition and exact resume order
+
+The Marketa-owned outbox, dispatcher, and delivery ledger are the replacement
+critical notification architecture. The old direct n8n compatibility call
+still exists in `paystack-webhook` and remains intentionally until the
+replacement completes a real controlled delivery proof. Do not remove it yet.
+
+Resume Ops 3 in exactly this order:
+
+1. **3C1D-S — sender enablement:** verify a Marketa-controlled domain and
+   configure the dedicated direct-send credential and sender.
+2. **3C1E — controlled first production dispatch:** process the existing
+   parent through the proven dispatcher path.
+3. **3C2 — scheduler:** begin only after successful 3C1E.
+4. **3D — remove the old n8n webhook notification call:** begin only after
+   successful 3C1E.
+5. **3E — failure/retry/idempotency operational proof:** remains after the
+   scheduler and n8n transition work.
+6. Mark Ops 3 complete only after those steps succeed.
+
+Pending outbox events must never be deleted or manually marked delivered
+merely because provider delivery is paused.
+
+### Work unaffected by the pause
+
+The sender-domain blocker does not prevent independent work on checkout,
+payment finalization, order operations, fulfilment, reconciliation design,
+refund design, fraud controls, admin operations, payout hardening, vendor
+operations, or other work that does not require outbound customer/vendor
+notification. These areas are not implied complete by this statement.
+
+### Ops 4 — Paid Order Stock Integrity
+
+Ops 4 is the next active operational stream and can proceed independently
+while Ops 3 notification delivery remains paused. Its purpose is to ensure
+that a successfully paid order reduces authoritative product stock exactly
+once, atomically, and safely under webhook replay and concurrent purchase
+conditions.
+
+The current known gap is that `public.decrement_stock(uuid, integer)` exists,
+but the current paid-order finalization path does not consume or decrement
+product stock. A successfully purchased quantity may therefore leave
+`products.stock` unchanged. Stock reservation, operational decrement, and
+complete oversell protection must not be assumed. Ops 4 implementation has not
+started.
+
+The first batch is **Ops 4A — Stock Integrity Audit**. It is read-only and must
+determine:
+
+- Current checkout stock-validation behavior.
+- The exact `decrement_stock` implementation and permissions.
+- The exact `finalize_paystack_paid_order` transaction.
+- The authority for order-item quantities.
+- How multi-item stock changes can be all-or-nothing.
+- Concurrency behavior for the final available units.
+- Webhook replay and idempotency behavior.
+- What happens when payment succeeds but available stock is no longer enough.
+- Whether stock decrement should be integrated directly into the finalizer
+  transaction instead of being performed externally.
+
+The audit must determine the implementation boundary rather than prescribe it
+in advance. Refunds, payouts, reconciliation, and notification delivery are
+outside the Ops 4 scope. Do not restore historical WF3/WF4/WF5 ordering.
+
+### Compact status summary
+
+Completed:
+
+- Storefront, shared account/payment recovery, and checkout hardening work
+  recorded elsewhere in this handoff.
+- Vendor provisioning, seller-owned finalization, shared Auth, activation,
+  and product/Storage boundaries.
+- Atomic payment finalization and the durable paid-order parent outbox.
+- Paid-order notification child ledger, provider-neutral dispatcher,
+  attempt-scoped provider idempotency, and direct Resend adapter.
+- Dispatcher authentication and provider-disabled production deployment.
+
+Paused:
+
+- Real paid-order notification delivery.
+- Reason: `VERIFIED_SENDING_DOMAIN_REQUIRED`.
+
+Deferred behind sender readiness, in order:
+
+- 3C1D-S
+- 3C1E
+- 3C2
+- 3D
+- 3E
+
+Next active work:
+
+- **Ops 4 — Paid Order Stock Integrity.**
+- First batch: **Ops 4A — read-only stock-integrity audit.**
+
 ## Current next-safe-work boundaries
 
 - The real product-image production smoke test remains deferred until the
@@ -338,9 +516,12 @@ using a one-use verification URL directly.
   uses local scope for the current browser session.
 - The unrelated payout-table lint issue remains parked.
 - Existing image warnings remain parked.
-- Payment, order, outbox, payout, refund, stock, and n8n hardening contracts
-  remain deferred and frozen unless separately authorized.
-- The production Resend sending domain remains deferred.
+- Paid-order provider enablement and the ordered Ops 3 continuation remain
+  paused at `VERIFIED_SENDING_DOMAIN_REQUIRED`.
+- The old n8n compatibility call remains frozen until Ops 3D, after successful
+  controlled delivery proof.
+- Payment, order, payout, refund, stock, and independent operations hardening
+  require separately authorized work derived from a fresh audit.
 - The final custom storefront domain remains deferred; the temporary canonical
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
@@ -349,7 +530,8 @@ using a one-use verification URL directly.
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the repository and
-stated production validation through Batch 4C and the historical test-scope
-maintenance at `9727fc7`. No disposable identifiers, emails, invite material,
-recovery tokens, passwords, session tokens, cookies, service-role credentials,
-Resend keys, or SMTP credentials belong in project documentation.
+stated production state through Ops 3C1D runtime readiness at `8df7030`.
+Real paid-order delivery remains paused before provider enablement. No
+disposable identifiers, emails, invite material, recovery tokens, passwords,
+session tokens, cookies, service-role credentials, dispatcher secrets, Resend
+keys, or SMTP credentials belong in project documentation.

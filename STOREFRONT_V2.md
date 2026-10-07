@@ -580,7 +580,8 @@ stage.
   results are reconciled once read-only and are never automatically replayed.
 
 Approval, provisioning, activation, and verification remain separate. Vendor
-logo support and payment/paid-order outbox redesign remain deferred.
+logo support remains deferred. The payment and paid-order outbox work has
+advanced to the Ops 3 runtime checkpoint documented below.
 
 ### Phase 4 — Customer experience
 
@@ -601,13 +602,98 @@ Deferred Phase 4 enhancements:
 - Optional future account and customer UX enhancements
 
 Separate existing backlogs remain outside Phase 4 and are not Phase 4
-blockers: payment/outbox hardening, refunds, payout scheduling, stock decrement
-redesign, seller suspension/deactivation/reactivation, verification workflow
-administration, and other separately authorized vendor portal cleanup.
+blockers: refunds, payout scheduling, stock decrement redesign, seller
+suspension/deactivation/reactivation, verification workflow administration,
+and other separately authorized vendor portal cleanup.
 
 ---
 
-## 13. Technical boundaries
+## 13. Operations checkpoint
+
+### Completed paid-order foundations
+
+- **Ops 3B1 complete:** durable `paid_order` parent outbox.
+- **Ops 3B2 complete:** atomic paid-order producer inside payment
+  finalization.
+- **Ops 3C1B complete:** notification delivery child ledger.
+- **Ops 3C1C complete:** provider-neutral dispatcher core.
+- **Ops 3C1C.1 complete:** provider idempotency scoped to persisted child
+  attempts.
+- **Ops 3C1D complete:** direct Resend adapter, customer and vendor renderers,
+  bounded provider timeout, conservative provider classification, dispatcher
+  processing budget, and focused tests.
+
+Payment finalization and notification delivery remain separate authorities:
+
+`Paystack/webhook/finalizer -> financial finalization -> paid_order outbox`
+
+`paid_order outbox -> Marketa dispatcher -> notification delivery ledger`
+`-> provider`
+
+Provider or email failure does not roll back or block completed financial
+finalization. The dispatcher is not payment authority.
+
+### Runtime state and pause
+
+`dispatch-paid-order-outbox` is deployed, active, and configured with
+`verify_jwt=false` plus internal bearer authentication through
+`MARKETA_DISPATCHER_SECRET`. Its HTTP/authentication and provider-disabled
+gates were proven without claiming the pending parent. Production currently
+has 23 applied migrations through `20260930194732`, one pending paid-order
+parent at attempt zero with no active lease, zero notification delivery rows,
+and no `pg_cron`, `pg_net`, or scheduler.
+
+Ops 3 is paused with reason `VERIFIED_SENDING_DOMAIN_REQUIRED`. Marketa does
+not currently control a verified sending domain. `RESEND_API_KEY` and
+`MARKETA_EMAIL_FROM` are intentionally not configured for the dispatcher.
+Resend's onboarding/default test sender is not a production identity, and
+`dantesportsacademy.com` is unavailable because Marketa does not control that
+domain's DNS. Do not invent or hard-code a future domain.
+
+Resume in this exact order:
+
+`3C1D-S sender enablement -> 3C1E controlled first production dispatch`
+`-> 3C2 scheduler -> 3D remove old n8n notification call`
+`-> 3E failure/retry/idempotency operational proof -> Ops 3 complete`
+
+Do not begin 3C2 or 3D before successful 3C1E. Pending outbox events must not
+be deleted or manually marked delivered because delivery is paused. The old
+direct n8n compatibility call remains in `paystack-webhook` until the
+replacement path has completed controlled delivery proof.
+
+Seller provisioning email is a separate path:
+
+`application -> Supabase Auth inviteUserByEmail -> Auth-managed delivery`
+
+It is not evidence that the paid-order dispatcher can use the same default
+sender and must not be redesigned as part of this pause.
+
+The sender-domain blocker does not prevent independent checkout, payment,
+order, fulfilment, reconciliation, refund, fraud-control, admin, payout,
+vendor, or other non-notification operations work.
+
+The next active stream is **Ops 4 — Paid Order Stock Integrity**. Its narrow
+purpose is to ensure that a successfully paid order reduces authoritative
+product stock exactly once, atomically, and safely under webhook replay and
+concurrent purchase conditions. `public.decrement_stock(uuid, integer)`
+exists, but the current paid-order finalization path does not consume or
+decrement stock, so successful purchase quantities may leave
+`products.stock` unchanged. Ops 4 implementation has not started.
+
+The first batch is **Ops 4A — Stock Integrity Audit** and is read-only. Before
+any implementation, it must determine current checkout stock validation, the
+exact `decrement_stock` implementation and permissions, the exact
+`finalize_paystack_paid_order` transaction, order-item quantity authority,
+all-or-nothing multi-item stock behavior, concurrency for final available
+units, webhook replay/idempotency behavior, the result when payment succeeds
+but stock is insufficient, and whether decrement belongs directly in the
+finalizer transaction. The audit must not assume that stock reservation,
+decrement, or oversell protection is already operational. Refunds, payouts,
+reconciliation, and notification delivery are outside Ops 4.
+
+---
+
+## 14. Technical boundaries
 
 During storefront work:
 
