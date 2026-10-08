@@ -90,9 +90,10 @@ tests are complete.
 Runtime readiness is partially complete. `dispatch-paid-order-outbox` is
 deployed and active with `verify_jwt=false`; it authenticates internally with
 `MARKETA_DISPATCHER_SECRET`. Method, authentication, and provider-disabled
-gates were proven without claiming work. The single paid-order parent remains
-pending at attempt zero with no lease, and `notification_deliveries` remains
-empty.
+gates were proven without claiming work. Two paid-order parents remain pending
+while dispatcher scheduling is paused, and `notification_deliveries` remains
+empty. The second parent was created by the controlled Ops 4 production
+purchase proof.
 
 Real notification delivery is paused with reason
 `VERIFIED_SENDING_DOMAIN_REQUIRED`. `RESEND_API_KEY` and
@@ -116,23 +117,43 @@ orders, fulfilment, reconciliation, refunds, fraud controls, admin operations,
 payout hardening, vendor operations, or other work that does not require
 outbound customer/vendor notification.
 
-The next active stream is **Ops 4 — Paid Order Stock Integrity**. Its purpose
-is to ensure that a successfully paid order reduces authoritative product
-stock exactly once, atomically, and safely under webhook replay and concurrent
-purchase conditions. `public.decrement_stock(uuid, integer)` exists, but the
-current paid-order finalization path does not consume or decrement product
-stock, so a successfully purchased quantity may leave `products.stock`
-unchanged. Ops 4 implementation has not started.
+## Paid-Order Stock Integrity
 
-The first batch is **Ops 4A — Stock Integrity Audit**, a read-only audit before
-implementation. It must establish current checkout stock validation, the exact
-`decrement_stock` implementation and permissions, the
-`finalize_paystack_paid_order` transaction, order-item quantity authority,
-all-or-nothing multi-item behavior, concurrency for the final available units,
-webhook replay/idempotency behavior, the outcome when payment succeeds but
-stock is insufficient, and whether decrement belongs directly inside the
-finalizer transaction. Refunds, payouts, reconciliation, reservations, and
-notification delivery are outside this Ops 4 definition.
+**Ops 4 — Paid Order Stock Integrity is COMPLETE in production.** Ops 4A
+completed the read-only stock audit, Ops 4B completed the atomic design, and
+Ops 4C integrated authoritative stock consumption into
+`finalize_paystack_paid_order` through migration
+`20261007135410_add_atomic_paid_order_stock_finalization.sql`.
+
+Initial disposable runtime validation found invalid schema-qualified
+multi-array `UNNEST` usage. The corrected implementation uses paired
+`ROWS FROM` expansion. Production now has finalizer normalized body hash
+`7d381e91b5fe6585d4d5e60c4d7f6cc8`; the contained legacy
+`decrement_stock` definition remains unchanged at
+`0094f1ea6602edbfe18ac8f9619677b8`.
+
+The finalizer aggregates order-item quantities by product, locks products with
+`FOR UPDATE` in deterministic product UUID order, and consumes stock in the
+same transaction as payment completion, seller credits, order confirmation,
+and the `paid_order` outbox event. Replay and guarded downstream failures do
+not consume stock twice or leave partial financial effects. Insufficient stock
+returns non-retryable `RECONCILIATION_REQUIRED`; an unavailable product also
+reconciles safely. Valid legacy pending orders consume stock exactly once.
+Product and vendor activation state is not a paid-time stock gate.
+
+The controlled production purchase proof bought quantity `1`, reduced
+aggregate stock from `278` to `277`, confirmed the order, completed the
+successful version-2 payment and payment event with outcome `FINALIZED`, and
+created exactly one `paid_order` outbox event. No product had negative stock.
+
+Genuine two-session last-unit, overlapping-product, delete-race, and `NOWAIT`
+tests remain **deferred validation** because independent disposable PostgreSQL
+sessions were unavailable. This does not block the completed Ops 4 scope and
+must not be described as proven concurrency. Ops 4 does not add stock
+reservation or an artificial low-stock cutoff. Reservation may be considered
+later if paid-but-out-of-stock cases become operationally meaningful. Vendor
+stale absolute stock overwrites remain a separate future inventory-hardening
+item. Ops 3 communications remains paused and separate.
 
 ## Customer Experience and Checkout
 

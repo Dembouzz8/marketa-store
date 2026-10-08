@@ -638,10 +638,11 @@ finalization. The dispatcher is not payment authority.
 `dispatch-paid-order-outbox` is deployed, active, and configured with
 `verify_jwt=false` plus internal bearer authentication through
 `MARKETA_DISPATCHER_SECRET`. Its HTTP/authentication and provider-disabled
-gates were proven without claiming the pending parent. Production currently
-has 23 applied migrations through `20260930194732`, one pending paid-order
-parent at attempt zero with no active lease, zero notification delivery rows,
-and no `pg_cron`, `pg_net`, or scheduler.
+gates were proven without claiming a pending parent. Production currently has
+24 applied migrations through `20261007135410`, two pending paid-order parents
+while dispatcher scheduling is paused, zero notification delivery rows, and
+no `pg_cron`, `pg_net`, or scheduler. The second parent was created by the
+controlled Ops 4 production purchase proof.
 
 Ops 3 is paused with reason `VERIFIED_SENDING_DOMAIN_REQUIRED`. Marketa does
 not currently control a verified sending domain. `RESEND_API_KEY` and
@@ -672,24 +673,48 @@ The sender-domain blocker does not prevent independent checkout, payment,
 order, fulfilment, reconciliation, refund, fraud-control, admin, payout,
 vendor, or other non-notification operations work.
 
-The next active stream is **Ops 4 — Paid Order Stock Integrity**. Its narrow
-purpose is to ensure that a successfully paid order reduces authoritative
-product stock exactly once, atomically, and safely under webhook replay and
-concurrent purchase conditions. `public.decrement_stock(uuid, integer)`
-exists, but the current paid-order finalization path does not consume or
-decrement stock, so successful purchase quantities may leave
-`products.stock` unchanged. Ops 4 implementation has not started.
+### Ops 4 — Paid Order Stock Integrity
 
-The first batch is **Ops 4A — Stock Integrity Audit** and is read-only. Before
-any implementation, it must determine current checkout stock validation, the
-exact `decrement_stock` implementation and permissions, the exact
-`finalize_paystack_paid_order` transaction, order-item quantity authority,
-all-or-nothing multi-item stock behavior, concurrency for final available
-units, webhook replay/idempotency behavior, the result when payment succeeds
-but stock is insufficient, and whether decrement belongs directly in the
-finalizer transaction. The audit must not assume that stock reservation,
-decrement, or oversell protection is already operational. Refunds, payouts,
-reconciliation, and notification delivery are outside Ops 4.
+**Status: COMPLETE in production.** Ops 4A completed the read-only audit, Ops
+4B completed the atomic paid-order stock design, and Ops 4C implemented that
+design in
+`20261007135410_add_atomic_paid_order_stock_finalization.sql`.
+
+Disposable runtime validation initially exposed invalid schema-qualified
+multi-array `UNNEST` usage. The corrected function uses paired `ROWS FROM`
+array expansion. Its installed normalized body hash is
+`7d381e91b5fe6585d4d5e60c4d7f6cc8`; `decrement_stock` remains unchanged at
+`0094f1ea6602edbfe18ac8f9619677b8`.
+
+Paid-order quantities are aggregated by product. Products are locked with
+`FOR UPDATE` in deterministic UUID order, revalidated, and decremented inside
+the same rollback boundary as payment completion, seller credits, order
+confirmation, and the `paid_order` outbox insert. Exact replay does not
+decrement again. Downstream failure rolls back tentative stock and financial
+work together. Insufficient stock produces non-retryable
+`RECONCILIATION_REQUIRED` without partial stock or financial effects, and an
+unavailable product resolves safely to reconciliation. Valid legacy pending
+orders also consume stock exactly once. Product and vendor activation state
+is intentionally not a paid-time stock gate.
+
+The controlled production proof purchased quantity `1`. Aggregate stock moved
+from `278` to `277`; the order was confirmed; the payment succeeded with
+financial contract version `2`; finalization returned `FINALIZED`; the payment
+event completed; exactly one `paid_order` outbox event was created; and no
+product had negative stock.
+
+Genuine two-session last-unit, overlapping-product, finalizer/delete-race, and
+order-item `NOWAIT` tests were not executed because independent disposable
+PostgreSQL sessions were unavailable. They remain **deferred validation**, not
+an Ops 4 completion blocker. Do not claim concurrency was proven.
+
+Ops 4 does not implement stock reservation and does not impose an artificial
+low-stock cutoff. Reservation is a possible future hardening item if
+paid-but-out-of-stock cases become operationally meaningful. Vendor stale
+absolute stock overwrites remain a separate future inventory-hardening item.
+Refunds, payouts, reconciliation operations, and notification delivery remain
+outside the completed Ops 4 scope. Ops 3 communications remains paused and
+separate.
 
 ---
 

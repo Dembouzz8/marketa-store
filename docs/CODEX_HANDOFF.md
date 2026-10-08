@@ -1,19 +1,19 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-10-07. Recheck the repository, linked migrations, and live
+Snapshot: 2026-10-08. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `8df703004b174678329db186d20a530359f50145`
-  (`add paid order Resend delivery adapter`).
+- HEAD: `674b3a48b21e23c1a0d2972f962d7e2d1d47c14d`
+  (`complete paid order stock integrity`).
 - Local `origin/main`: the same commit.
 - The working tree was clean before this documentation update. This batch
   changes only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`.
-- The repository and linked database contain 23 applied migrations through
-  `20260930194732_add_paid_order_notification_delivery_ledger.sql`.
+- The repository and linked database contain 24 applied migrations through
+  `20261007135410_add_atomic_paid_order_stock_finalization.sql`.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -39,11 +39,11 @@ through Batch 4C. Approval, provisioning, activation, and verification remain
 separate states. Activation allows an approved and provisioned seller to sell;
 it does not confer verification.
 
-Atomic payment finalization, the durable paid-order outbox, the notification
-delivery ledger, the provider-neutral dispatcher, and the direct Resend
-adapter are implemented. Real paid-order delivery is paused only at the sender
-enablement boundary described below; that pause does not block independent
-Marketa operations work.
+Atomic payment and stock finalization, the durable paid-order outbox, the
+notification delivery ledger, the provider-neutral dispatcher, and the direct
+Resend adapter are implemented. Real paid-order delivery is paused only at the
+sender enablement boundary described below; that pause does not block
+independent Marketa operations work.
 
 ## Vendor provisioning status
 
@@ -367,9 +367,10 @@ completed financial finalization.
 
 The sanitized live checkpoint is:
 
-- 23 migrations are applied; the latest is `20260930194732`.
-- Exactly one `paid_order` parent remains `pending` at attempt count zero.
-- The parent has no active lease, and no parent is processing.
+- 24 migrations are applied; the latest is `20261007135410`.
+- Exactly two `paid_order` parents remain pending while dispatcher scheduling
+  is paused. The controlled Ops 4 production purchase created the second.
+- No parent is processing.
 - `notification_deliveries` contains zero rows.
 - `pg_cron` and `pg_net` are absent, and no scheduler is installed.
 
@@ -433,38 +434,58 @@ refund design, fraud controls, admin operations, payout hardening, vendor
 operations, or other work that does not require outbound customer/vendor
 notification. These areas are not implied complete by this statement.
 
-### Ops 4 — Paid Order Stock Integrity
+### Ops 4 — Paid Order Stock Integrity — COMPLETE
 
-Ops 4 is the next active operational stream and can proceed independently
-while Ops 3 notification delivery remains paused. Its purpose is to ensure
-that a successfully paid order reduces authoritative product stock exactly
-once, atomically, and safely under webhook replay and concurrent purchase
-conditions.
+- **Ops 4A — COMPLETE:** read-only stock-integrity audit.
+- **Ops 4B — COMPLETE:** atomic paid-order stock-finalization design.
+- **Ops 4C — COMPLETE/APPLIED:** authoritative stock consumption was added to
+  `finalize_paystack_paid_order` by
+  `20261007135410_add_atomic_paid_order_stock_finalization.sql`.
 
-The current known gap is that `public.decrement_stock(uuid, integer)` exists,
-but the current paid-order finalization path does not consume or decrement
-product stock. A successfully purchased quantity may therefore leave
-`products.stock` unchanged. Stock reservation, operational decrement, and
-complete oversell protection must not be assumed. Ops 4 implementation has not
-started.
+Initial disposable runtime validation exposed invalid schema-qualified
+multi-array `UNNEST` usage. The corrected migration uses paired `ROWS FROM`
+expansion. Production applied it successfully. The installed normalized
+finalizer body hash is `7d381e91b5fe6585d4d5e60c4d7f6cc8`; the contained
+legacy `decrement_stock` definition remains unchanged at
+`0094f1ea6602edbfe18ac8f9619677b8`.
 
-The first batch is **Ops 4A — Stock Integrity Audit**. It is read-only and must
-determine:
+The finalizer aggregates authoritative order-item quantities by product,
+locks products with `FOR UPDATE` in deterministic product UUID order, and
+performs the checked stock decrement inside the same rollback boundary as
+payment completion, seller credits, order confirmation, and the `paid_order`
+outbox insert. Disposable validation proved exact replay/idempotency,
+downstream rollback, insufficient-stock reconciliation, product-unavailable
+reconciliation, activation neutrality, and exact-once legacy pending-order
+stock consumption.
 
-- Current checkout stock-validation behavior.
-- The exact `decrement_stock` implementation and permissions.
-- The exact `finalize_paystack_paid_order` transaction.
-- The authority for order-item quantities.
-- How multi-item stock changes can be all-or-nothing.
-- Concurrency behavior for the final available units.
-- Webhook replay and idempotency behavior.
-- What happens when payment succeeds but available stock is no longer enough.
-- Whether stock decrement should be integrated directly into the finalizer
-  transaction instead of being performed externally.
+Insufficient stock returns non-retryable `RECONCILIATION_REQUIRED` with
+`PAID_STOCK_INSUFFICIENT` and no partial stock or financial effects. Missing
+products use safe reconciliation. Product and vendor activation state is not
+a paid-time stock gate.
 
-The audit must determine the implementation boundary rather than prescribe it
-in advance. Refunds, payouts, reconciliation, and notification delivery are
-outside the Ops 4 scope. Do not restore historical WF3/WF4/WF5 ordering.
+The controlled production purchase proof passed:
+
+- Purchased quantity: `1`.
+- Aggregate product stock: `278 -> 277`.
+- Order: confirmed.
+- Payment: successful, financial contract version `2`.
+- Finalization outcome: `FINALIZED`.
+- Payment event: completed.
+- New `paid_order` outbox events: exactly `1`.
+- Products with negative stock: `0`.
+
+Genuine two-session last-unit, overlapping-product, finalizer/delete-race, and
+order-item `NOWAIT` tests were not executed because independent disposable
+PostgreSQL sessions were unavailable. They remain **DEFERRED VALIDATION**, not
+an Ops 4 completion blocker. Do not describe concurrency as proven.
+
+Ops 4 does not add an artificial low-stock cutoff or a stock-reservation
+system. Reservation remains a possible future hardening item if
+paid-but-out-of-stock cases become operationally meaningful. Vendor stale
+absolute stock overwrites remain a separate future inventory-hardening item.
+Refunds, payouts, reconciliation operations, and notification delivery remain
+outside the completed Ops 4 scope. Ops 3 communications remains paused and
+separate. Do not restore historical WF3/WF4/WF5 ordering.
 
 ### Compact status summary
 
@@ -478,6 +499,8 @@ Completed:
 - Paid-order notification child ledger, provider-neutral dispatcher,
   attempt-scoped provider idempotency, and direct Resend adapter.
 - Dispatcher authentication and provider-disabled production deployment.
+- Ops 4 paid-order stock integrity through production-applied Ops 4C and its
+  controlled production purchase proof.
 
 Paused:
 
@@ -492,10 +515,9 @@ Deferred behind sender readiness, in order:
 - 3D
 - 3E
 
-Next active work:
+Deferred validation:
 
-- **Ops 4 — Paid Order Stock Integrity.**
-- First batch: **Ops 4A — read-only stock-integrity audit.**
+- Genuine two-session Ops 4 concurrency and lock-contention exercises.
 
 ## Current next-safe-work boundaries
 
@@ -520,8 +542,12 @@ Next active work:
   paused at `VERIFIED_SENDING_DOMAIN_REQUIRED`.
 - The old n8n compatibility call remains frozen until Ops 3D, after successful
   controlled delivery proof.
-- Payment, order, payout, refund, stock, and independent operations hardening
-  require separately authorized work derived from a fresh audit.
+- Payment, order, payout, refund, and independent operations hardening require
+  separately authorized work derived from a fresh audit.
+- Stock reservation remains optional future hardening if paid-but-out-of-stock
+  cases become operationally meaningful; Ops 4 does not implement it.
+- Vendor stale absolute stock overwrites remain a separate future
+  inventory-hardening item.
 - The final custom storefront domain remains deferred; the temporary canonical
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
@@ -530,7 +556,7 @@ Next active work:
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the repository and
-stated production state through Ops 3C1D runtime readiness at `8df7030`.
+stated production state through production-complete Ops 4 at `674b3a4`.
 Real paid-order delivery remains paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
