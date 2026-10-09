@@ -48,7 +48,7 @@ test("vendor login and browser product writes share the SSR cookie client", () =
 })
 
 test("ProductForm uploads before mutation and reports controlled failures", () => {
-  const upload = productForm.indexOf("const uploadedImages = await uploadImages()")
+  const upload = productForm.indexOf("const uploadedImages = await uploadImages(imageItems)")
   const productMutation = productForm.indexOf('.from("products")')
   assert.notEqual(upload, -1)
   assert.notEqual(productMutation, -1)
@@ -70,6 +70,6 @@ test("browser session alignment preserves product and Storage boundaries", () =>
     productForm,
     /const path = `\$\{vendorId\}\/\$\{crypto\.randomUUID\(\)\}\.\$\{extension\}`/
   )
-  assert.match(productForm, /\.from\("product-images"\)\s*\.upload\(path, file\)/)
+  assert.match(productForm, /\.from\("product-images"\)\s*\.upload\(path, item\.file\)/)
   assert.doesNotMatch(productForm, /upsert\s*:/)
 })

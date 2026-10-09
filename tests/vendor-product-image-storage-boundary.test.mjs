@@ -195,25 +195,27 @@ test("ProductForm generates MIME-derived random names under the vendor namespace
   assert.doesNotMatch(productFormSource, /Date\.now\(\)-\$\{file\.name\}/)
   const uploadImages = between(
     productFormSource,
-    "const uploadImages = async () =>",
+    "const uploadImages = async (items: ProductImageItem[]) =>",
     "const handleSubmit"
   )
   assert.equal(uploadImages.includes("file.name"), false)
 })
 
-test("ProductForm validates MIME, five MiB, and the four-image maximum", () => {
+test("ProductForm validates MIME, five MiB, and the six-image maximum", () => {
   assert.match(productFormSource, /const MAX_IMAGE_SIZE_BYTES = 5 \* 1024 \* 1024/)
+  assert.match(productFormSource, /const MAX_PRODUCT_IMAGES = 6/)
   assert.match(productFormSource, /file\.size > MAX_IMAGE_SIZE_BYTES/)
   assert.match(productFormSource, /Each image must be 5 MiB or smaller\./)
   assert.match(productFormSource, /Only JPEG, PNG, and WebP images are supported\./)
-  assert.match(productFormSource, /existingImages\.length \+ allowedFiles\.length > 4/)
-  assert.match(productFormSource, /You can upload a maximum of 4 images\./)
+  assert.match(productFormSource, /allowedFiles\.length > remainingImageSlots/)
+  assert.match(productFormSource, /You can upload a maximum of 6 images\./)
+  assert.match(productFormSource, /imageUrls\.length > MAX_PRODUCT_IMAGES/)
 })
 
 test("ProductForm retains non-upsert upload and public URL generation", () => {
   assert.match(
     productFormSource,
-    /\.from\("product-images"\)\s*\.upload\(path, file\)/
+    /\.from\("product-images"\)\s*\.upload\(path, item\.file\)/
   )
   assert.equal(productFormSource.includes("upsert"), false)
   assert.match(

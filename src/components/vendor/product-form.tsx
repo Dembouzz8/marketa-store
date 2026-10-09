@@ -1,7 +1,14 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
-import { ImagePlus, Loader2 } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
+import {
+  ChevronLeft,
+  ChevronRight,
+  ImagePlus,
+  Loader2,
+  Star,
+  Trash2,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,6 +38,7 @@ const categories = [
 ]
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+const MAX_PRODUCT_IMAGES = 6
 
 const imageExtensions = {
   "image/jpeg": "jpg",
@@ -42,6 +50,19 @@ function getImageExtension(mimeType: string) {
   return imageExtensions[mimeType as keyof typeof imageExtensions] ?? null
 }
 
+type ProductImageItem =
+  | {
+      id: string
+      kind: "existing"
+      url: string
+    }
+  | {
+      id: string
+      kind: "new"
+      file: File
+      previewUrl: string
+    }
+
 export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [name, setName] = useState(product?.name ?? "")
@@ -52,19 +73,25 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
   const [stock, setStock] = useState(product ? String(product.stock) : "")
   const [category, setCategory] = useState(product?.category ?? categories[0])
   const [isActive, setIsActive] = useState(product?.is_active ?? false)
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [imageItems, setImageItems] = useState<ProductImageItem[]>(() =>
+    (product?.images ?? []).map((url, index) => ({
+      id: `existing-${product?.id ?? "new"}-${index}`,
+      kind: "existing",
+      url,
+    }))
+  )
   const [errors, setErrors] = useState<FormErrors>({})
   const [isPending, startTransition] = useTransition()
+  const previewUrls = useRef(new Set<string>())
+  const remainingImageSlots = Math.max(0, MAX_PRODUCT_IMAGES - imageItems.length)
 
-  const existingImages = product?.images ?? []
-  const selectedPreviews = useMemo(
-    () =>
-      selectedFiles.map((file) => ({
-        name: file.name,
-        url: URL.createObjectURL(file),
-      })),
-    [selectedFiles]
-  )
+  useEffect(() => {
+    const urls = previewUrls.current
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url))
+      urls.clear()
+    }
+  }, [])
 
   const validate = () => {
     const nextErrors: FormErrors = {}
@@ -80,8 +107,8 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
     if (!stock || !Number.isFinite(numericStock) || numericStock < 0) {
       nextErrors.stock = "Stock must be zero or greater."
     }
-    if (existingImages.length + selectedFiles.length > 4) {
-      nextErrors.images = "You can upload a maximum of 4 images."
+    if (imageItems.length > MAX_PRODUCT_IMAGES) {
+      nextErrors.images = "You can upload a maximum of 6 images."
     }
 
     setErrors(nextErrors)
@@ -91,6 +118,7 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
     const allowedFiles = files.filter((file) => getImageExtension(file.type))
+    event.target.value = ""
 
     if (allowedFiles.length !== files.length) {
       setErrors((current) => ({
@@ -108,38 +136,83 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
       return
     }
 
-    if (existingImages.length + allowedFiles.length > 4) {
+    if (allowedFiles.length > remainingImageSlots) {
       setErrors((current) => ({
         ...current,
-        images: "You can upload a maximum of 4 images.",
+        images: `You can add ${remainingImageSlots} more image${
+          remainingImageSlots === 1 ? "" : "s"
+        }. Products support a maximum of 6 images.`,
       }))
       return
     }
 
+    const newItems = allowedFiles.map((file) => {
+      const previewUrl = URL.createObjectURL(file)
+      previewUrls.current.add(previewUrl)
+      return {
+        id: `new-${crypto.randomUUID()}`,
+        kind: "new" as const,
+        file,
+        previewUrl,
+      }
+    })
+
     setErrors((current) => ({ ...current, images: undefined }))
-    setSelectedFiles(allowedFiles)
+    setImageItems((current) => [...current, ...newItems])
   }
 
-  const uploadImages = async () => {
-    return await Promise.all(
-      selectedFiles.map(async (file) => {
-        const extension = getImageExtension(file.type)
-        if (!extension) throw new Error("Unsupported image type.")
+  const moveImage = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || toIndex < 0 || toIndex >= imageItems.length) {
+      return
+    }
 
-        const path = `${vendorId}/${crypto.randomUUID()}.${extension}`
-        const { error } = await supabase.storage
-          .from("product-images")
-          .upload(path, file)
+    setImageItems((current) => {
+      const next = [...current]
+      const [moved] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, moved)
+      return next
+    })
+  }
 
-        if (error) throw error
-
-        const { data } = supabase.storage
-          .from("product-images")
-          .getPublicUrl(path)
-
-        return data.publicUrl
-      })
+  const removeImage = (id: string) => {
+    const item = imageItems.find((candidate) => candidate.id === id)
+    if (item?.kind === "new") {
+      URL.revokeObjectURL(item.previewUrl)
+      previewUrls.current.delete(item.previewUrl)
+    }
+    setImageItems((current) =>
+      current.filter((candidate) => candidate.id !== id)
     )
+    setErrors((current) => ({ ...current, images: undefined }))
+  }
+
+  const uploadImages = async (items: ProductImageItem[]) => {
+    const uploadedImages = await Promise.all(
+      items
+        .filter(
+          (item): item is Extract<ProductImageItem, { kind: "new" }> =>
+            item.kind === "new"
+        )
+        .map(async (item) => {
+          const extension = getImageExtension(item.file.type)
+          if (!extension) throw new Error("Unsupported image type.")
+
+          const path = `${vendorId}/${crypto.randomUUID()}.${extension}`
+          const { error } = await supabase.storage
+            .from("product-images")
+            .upload(path, item.file)
+
+          if (error) throw error
+
+          const { data } = supabase.storage
+            .from("product-images")
+            .getPublicUrl(path)
+
+          return [item.id, data.publicUrl] as const
+        })
+    )
+
+    return new Map(uploadedImages)
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -152,10 +225,17 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
       let saveStage: "upload" | "product" = "upload"
 
       try {
-        const uploadedImages = await uploadImages()
-        const imageUrls = product
-          ? [...existingImages, ...uploadedImages].slice(0, 4)
-          : uploadedImages
+        const uploadedImages = await uploadImages(imageItems)
+        const imageUrls = imageItems.map((item) =>
+          item.kind === "existing" ? item.url : uploadedImages.get(item.id) ?? ""
+        )
+
+        if (
+          imageUrls.length > MAX_PRODUCT_IMAGES ||
+          imageUrls.some((url) => !url)
+        ) {
+          throw new Error("Invalid product image state.")
+        }
 
         const payload = {
           vendor_id: vendorId,
@@ -333,12 +413,14 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
             Upload product images
           </span>
           <span className="mt-1 text-xs text-zinc-500">
-            JPEG, PNG, or WebP. Maximum 4 images.
+            JPEG, PNG, or WebP. Maximum 6 images. {remainingImageSlots} slot
+            {remainingImageSlots === 1 ? "" : "s"} remaining.
           </span>
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp"
             multiple
+            disabled={isPending}
             className="sr-only"
             onChange={handleFileChange}
           />
@@ -347,24 +429,80 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
           <p className="mt-2 text-xs text-red-500">{errors.images}</p>
         )}
 
-        {(existingImages.length > 0 || selectedPreviews.length > 0) && (
-          <div className="mt-4 grid grid-cols-4 gap-3">
-            {existingImages.map((image) => (
-              <img
-                key={image}
-                src={image}
-                alt="Existing product"
-                className="aspect-square rounded-lg object-cover"
-              />
-            ))}
-            {selectedPreviews.map((preview) => (
-              <img
-                key={preview.url}
-                src={preview.url}
-                alt={preview.name}
-                className="aspect-square rounded-lg object-cover"
-              />
-            ))}
+        {imageItems.length > 0 && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {imageItems.map((item, index) => {
+              const previewUrl =
+                item.kind === "existing" ? item.url : item.previewUrl
+              const previewAlt =
+                item.kind === "existing"
+                  ? `Product image ${index + 1}`
+                  : item.file.name
+
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-xl border border-zinc-200 bg-white p-2"
+                >
+                  <div className="relative aspect-square overflow-hidden rounded-lg bg-zinc-100">
+                    <img
+                      src={previewUrl}
+                      alt={previewAlt}
+                      className="size-full object-cover"
+                    />
+                    {index === 0 && (
+                      <span className="absolute left-2 top-2 rounded-full bg-amber-500 px-2 py-1 text-xs font-semibold text-zinc-900">
+                        Primary
+                      </span>
+                    )}
+                    {item.kind === "new" && (
+                      <span className="absolute right-2 top-2 rounded-full bg-zinc-900/80 px-2 py-1 text-xs font-medium text-white">
+                        New
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={() => moveImage(index, 0)}
+                      disabled={isPending || index === 0}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-md border border-zinc-200 px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Make image ${index + 1} primary`}
+                    >
+                      <Star className="size-3.5" />
+                      Primary
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveImage(index, index - 1)}
+                      disabled={isPending || index === 0}
+                      className="inline-flex size-9 items-center justify-center rounded-md border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Move image ${index + 1} left`}
+                    >
+                      <ChevronLeft className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveImage(index, index + 1)}
+                      disabled={isPending || index === imageItems.length - 1}
+                      className="inline-flex size-9 items-center justify-center rounded-md border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Move image ${index + 1} right`}
+                    >
+                      <ChevronRight className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeImage(item.id)}
+                      disabled={isPending}
+                      className="inline-flex size-9 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Remove image ${index + 1}`}
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
