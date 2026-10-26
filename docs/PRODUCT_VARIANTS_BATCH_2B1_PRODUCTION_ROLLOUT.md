@@ -1,6 +1,44 @@
 # Product Variants Batch 2B1 Production Rollout
 
-This runbook prepares a controlled database-only rollout. It does not authorize a deployment by itself.
+Batch 2B1 completed its approved production rollout on October 26, 2026. The
+preflight, deployment, and recovery procedures below are retained as the
+reviewed operational record; they do not authorize a repeat deployment.
+
+## Deployment outcome
+
+**Status: COMPLETE for the approved Batch 2B1 backend scope.** Both approved
+migrations were applied to production project `jznuklvrhfivbdsxgiwv`:
+
+1. `20261020150650_secure_vendor_variant_management_backend.sql`
+2. `20261026072004_add_order_items_product_id_index.sql`
+
+The production migration ledger contained 27 migrations after deployment.
+Post-deployment verification confirmed:
+
+- all five vendor variant-management RPCs were installed with the reviewed
+  ownership and execution boundaries;
+- both draft-only publication constraints were validated;
+- all six relevant triggers were enabled;
+- existing product and variant RLS policies were unchanged;
+- `order_items_product_id_idx` was valid and ready;
+- all 47 existing order items and all 9 existing products were preserved;
+- payment and inventory function hashes were unchanged;
+- backend tests and disposable PostgreSQL behavioral tests passed; and
+- six production UI regression smoke tests passed for the
+  storefront/catalogue, product details, cart, checkout form, vendor
+  dashboard, and admin dashboard.
+
+No real checkout or payment was performed during the production smoke test.
+No production variant-write smoke test was performed; the variant-management
+behavior was validated in the disposable database. A pre-deployment
+public-schema backup was created and its archive readability was verified.
+The Docker catalog-cache warning did not prevent deployment.
+
+Batch 2B1 does not enable customer-facing variant purchasing. Variant products
+remain subject to the draft-only publication restrictions. Customer variant
+selection, checkout integration, and later variant phases remain deferred.
+The next development batch is **Batch 2B2 — Vendor Sizes and Colours
+Interface**.
 
 ## Fixed targets and artifacts
 

@@ -583,6 +583,35 @@ Approval, provisioning, activation, and verification remain separate. Vendor
 logo support remains deferred. The payment and paid-order outbox work has
 advanced to the Ops 3 runtime checkpoint documented below.
 
+### Product Variants
+
+**Batch 2B1 is COMPLETE for its approved backend scope.** The secure vendor
+variant-management backend was deployed to production project
+`jznuklvrhfivbdsxgiwv` on October 26, 2026 through:
+
+- `20261020150650_secure_vendor_variant_management_backend.sql`
+- `20261026072004_add_order_items_product_id_index.sql`
+
+Production verification confirmed all five vendor variant-management RPCs,
+their reviewed ownership and execution boundaries, both validated draft-only
+publication constraints, all six relevant enabled triggers, unchanged product
+and variant RLS policies, and a valid and ready
+`order_items_product_id_idx`. The deployment preserved all 47 existing order
+items and all 9 existing products. Payment and inventory function hashes were
+unchanged. Backend tests, disposable PostgreSQL behavioral tests, and six
+production UI regression smoke tests covering the storefront/catalogue,
+product details, cart, checkout form, vendor dashboard, and admin dashboard
+passed. No real checkout or payment was performed, and no production variant
+write was used for the smoke test; variant write behavior was validated in the
+disposable database.
+
+Batch 2B1 does not enable customer-facing variant purchasing. Variant products
+remain subject to the draft-only publication restrictions. Customer variant
+selection, cart and checkout integration, paid-order variant stock
+finalization, and later variant phases remain deferred.
+
+**Next development batch:** Batch 2B2 — Vendor Sizes and Colours Interface.
+
 ### Phase 4 — Customer experience
 
 **Status: Complete for MVP.**
@@ -639,7 +668,7 @@ finalization. The dispatcher is not payment authority.
 `verify_jwt=false` plus internal bearer authentication through
 `MARKETA_DISPATCHER_SECRET`. Its HTTP/authentication and provider-disabled
 gates were proven without claiming a pending parent. Production currently has
-24 applied migrations through `20261007135410`, two pending paid-order parents
+27 applied migrations through `20261026072004`, two pending paid-order parents
 while dispatcher scheduling is paused, zero notification delivery rows, and
 no `pg_cron`, `pg_net`, or scheduler. The second parent was created by the
 controlled Ops 4 production purchase proof.
