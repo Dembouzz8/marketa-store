@@ -3,7 +3,7 @@ import { redirect } from "next/navigation"
 
 import { ProductsTable } from "@/components/vendor/products-table"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
-import type { Product } from "@/types"
+import type { VendorProduct } from "@/types"
 
 type ActionResult = {
   error: string | null
@@ -37,7 +37,7 @@ export default async function VendorProductsPage() {
     .eq("vendor_id", vendor.id)
     .order("created_at", { ascending: false })
 
-  const products = (productsData ?? []) as Product[]
+  const products = (productsData ?? []) as VendorProduct[]
   const activeCount = products.filter((product) => product.is_active).length
 
   async function deleteProduct(productId: string): Promise<ActionResult> {
@@ -53,14 +53,23 @@ export default async function VendorProductsPage() {
       return { error: "Product management becomes available after seller activation." }
     }
 
-    const { error } = await actionSupabase
+    const { data: deletedProduct, error } = await actionSupabase
       .from("products")
       .delete()
       .eq("id", productId)
       .eq("vendor_id", actionVendor.id)
+      .eq("variant_mode", "none")
+      .select("id")
+      .maybeSingle()
 
     if (error) {
       return { error: "Unable to delete the product. Please try again." }
+    }
+    if (!deletedProduct) {
+      return {
+        error:
+          "This product changed or is no longer eligible for ordinary-product deletion. Refresh and try again.",
+      }
     }
 
     revalidatePath("/vendor/products")
@@ -83,14 +92,24 @@ export default async function VendorProductsPage() {
       return { error: "Product management becomes available after seller activation." }
     }
 
-    const { error } = await actionSupabase
+    const { data: updatedProduct, error } = await actionSupabase
       .from("products")
       .update({ is_active: isActive })
       .eq("id", productId)
       .eq("vendor_id", actionVendor.id)
+      .eq("variant_mode", "none")
+      .eq("is_active", !isActive)
+      .select("id")
+      .maybeSingle()
 
     if (error) {
       return { error: "Unable to update the product. Please try again." }
+    }
+    if (!updatedProduct) {
+      return {
+        error:
+          "This product changed or is no longer eligible for ordinary-product status updates. Refresh and try again.",
+      }
     }
 
     revalidatePath("/vendor/products")

@@ -15,10 +15,10 @@ import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/use-toast"
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { cn } from "@/lib/utils"
-import type { Product } from "@/types"
+import type { VendorProduct } from "@/types"
 
 interface ProductFormProps {
-  product?: Product
+  product?: VendorProduct
   vendorId: string
   onSuccess: () => Promise<void>
 }
@@ -65,6 +65,9 @@ type ProductImageItem =
 
 export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
+  const isVariantProduct = Boolean(
+    product?.variant_mode && product.variant_mode !== "none"
+  )
   const [name, setName] = useState(product?.name ?? "")
   const [description, setDescription] = useState(product?.description ?? "")
   const [price, setPrice] = useState(
@@ -104,7 +107,10 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
     if (!price || !Number.isFinite(numericPrice) || numericPrice <= 0) {
       nextErrors.price = "Price must be greater than zero."
     }
-    if (!stock || !Number.isFinite(numericStock) || numericStock < 0) {
+    if (
+      !isVariantProduct &&
+      (!stock || !Number.isFinite(numericStock) || numericStock < 0)
+    ) {
       nextErrors.stock = "Stock must be zero or greater."
     }
     if (imageItems.length > MAX_PRODUCT_IMAGES) {
@@ -242,10 +248,14 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
           name: name.trim(),
           description: description.trim() || null,
           price: Number(price),
-          stock: Number(stock),
           category,
           images: imageUrls,
-          is_active: isActive,
+          ...(isVariantProduct
+            ? {}
+            : {
+                stock: Number(stock),
+                is_active: isActive,
+              }),
         }
 
         saveStage = "product"
@@ -341,16 +351,24 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
           <span className="mb-2 block text-sm font-medium text-zinc-700">
             Stock Quantity
           </span>
-          <Input
-            type="number"
-            value={stock}
-            min={0}
-            onChange={(event) => setStock(event.target.value)}
-            className="h-11 rounded-lg border-zinc-200"
-            required
-          />
-          {errors.stock && (
-            <p className="mt-1 text-xs text-red-500">{errors.stock}</p>
+          {isVariantProduct ? (
+            <div className="flex h-11 items-center rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-600">
+              Managed per size or colour combination
+            </div>
+          ) : (
+            <>
+              <Input
+                type="number"
+                value={stock}
+                min={0}
+                onChange={(event) => setStock(event.target.value)}
+                className="h-11 rounded-lg border-zinc-200"
+                required
+              />
+              {errors.stock && (
+                <p className="mt-1 text-xs text-red-500">{errors.stock}</p>
+              )}
+            </>
           )}
         </label>
 
@@ -375,31 +393,37 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
           <span className="mb-2 block text-sm font-medium text-zinc-700">
             Status
           </span>
-          <button
-            type="button"
-            onClick={() => setIsActive((value) => !value)}
-            className={cn(
-              "flex h-11 w-full items-center justify-between rounded-lg border px-3 text-sm font-medium",
-              isActive
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-zinc-200 bg-zinc-50 text-zinc-500"
-            )}
-          >
-            <span>{isActive ? "Active" : "Inactive"}</span>
-            <span
+          {isVariantProduct ? (
+            <div className="flex h-11 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-medium text-amber-800">
+              Draft only — variant publication is not available yet
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsActive((value) => !value)}
               className={cn(
-                "relative h-6 w-11 rounded-full transition-colors",
-                isActive ? "bg-emerald-500" : "bg-zinc-300"
+                "flex h-11 w-full items-center justify-between rounded-lg border px-3 text-sm font-medium",
+                isActive
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-500"
               )}
             >
+              <span>{isActive ? "Active" : "Inactive"}</span>
               <span
                 className={cn(
-                  "absolute left-0 top-1 size-4 rounded-full bg-white transition-transform",
-                  isActive ? "translate-x-6" : "translate-x-1"
+                  "relative h-6 w-11 rounded-full transition-colors",
+                  isActive ? "bg-emerald-500" : "bg-zinc-300"
                 )}
-              />
-            </span>
-          </button>
+              >
+                <span
+                  className={cn(
+                    "absolute left-0 top-1 size-4 rounded-full bg-white transition-transform",
+                    isActive ? "translate-x-6" : "translate-x-1"
+                  )}
+                />
+              </span>
+            </button>
+          )}
         </label>
       </div>
 

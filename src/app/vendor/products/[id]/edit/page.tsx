@@ -2,8 +2,9 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { ProductForm } from "@/components/vendor/product-form"
+import { ProductVariantsManager } from "@/components/vendor/product-variants-manager"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
-import type { Product } from "@/types"
+import type { ProductVariant, VendorProduct } from "@/types"
 
 export default async function EditProductPage({
   params,
@@ -57,6 +58,18 @@ export default async function EditProductPage({
 
   if (!productData) redirect("/vendor/products")
 
+  const product = productData as VendorProduct
+  const { data: variantsData, error: variantsError } = await supabase
+    .from("product_variants")
+    .select(
+      "id, product_id, vendor_id, size, colour, size_normalized, colour_normalized, stock, stock_version, is_active, created_at, updated_at"
+    )
+    .eq("product_id", product.id)
+    .eq("vendor_id", vendor.id)
+    .order("created_at", { ascending: true })
+
+  const variants = (variantsData ?? []) as ProductVariant[]
+
   async function handleSuccess() {
     "use server"
     redirect("/vendor/products")
@@ -72,9 +85,15 @@ export default async function EditProductPage({
       </Link>
       <h1 className="text-2xl font-semibold text-zinc-900">Edit Product</h1>
       <ProductForm
-        product={productData as Product}
+        product={product}
         vendorId={vendor.id}
         onSuccess={handleSuccess}
+      />
+      <ProductVariantsManager
+        key={`${product.id}:${product.variant_mode}`}
+        product={product}
+        initialVariants={variants}
+        initialLoadFailed={Boolean(variantsError)}
       />
     </div>
   )

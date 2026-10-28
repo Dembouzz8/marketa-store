@@ -17,14 +17,14 @@ import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/use-toast"
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
 import { cn, formatNaira, getProductImage } from "@/lib/utils"
-import type { Product } from "@/types"
+import type { ProductVariantMode, VendorProduct } from "@/types"
 
 type ActionResult = {
   error: string | null
 }
 
 interface ManageableProductsTableProps {
-  products: Product[]
+  products: VendorProduct[]
   canManage: true
   onDelete: (productId: string) => Promise<ActionResult>
   onToggleActive: (
@@ -34,7 +34,7 @@ interface ManageableProductsTableProps {
 }
 
 interface ReadOnlyProductsTableProps {
-  products: Product[]
+  products: VendorProduct[]
   canManage: false
   onDelete?: never
   onToggleActive?: never
@@ -43,6 +43,17 @@ interface ReadOnlyProductsTableProps {
 type ProductsTableProps =
   | ManageableProductsTableProps
   | ReadOnlyProductsTableProps
+
+function getVariantMode(product: VendorProduct): ProductVariantMode {
+  return product.variant_mode ?? "none"
+}
+
+function getVariantModeLabel(mode: ProductVariantMode) {
+  if (mode === "size") return "Sizes"
+  if (mode === "colour") return "Colours"
+  if (mode === "size_colour") return "Sizes + colours"
+  return "Ordinary"
+}
 
 export function ProductsTable({
   products,
@@ -53,7 +64,7 @@ export function ProductsTable({
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [localProducts, setLocalProducts] = useState(products)
   const [query, setQuery] = useState("")
-  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<VendorProduct | null>(null)
   const [editingStockId, setEditingStockId] = useState<string | null>(null)
   const [stockDraft, setStockDraft] = useState("")
   const [isPending, startTransition] = useTransition()
@@ -71,7 +82,7 @@ export function ProductsTable({
     })
   }, [localProducts, query])
 
-  const handleToggleActive = (product: Product) => {
+  const handleToggleActive = (product: VendorProduct) => {
     if (!canManage || !onToggleActive) return
 
     const nextActive = !product.is_active
@@ -121,7 +132,7 @@ export function ProductsTable({
     })
   }
 
-  const handleStockSave = async (product: Product) => {
+  const handleStockSave = async (product: VendorProduct) => {
     if (!canManage) return
 
     const nextStock = Number(stockDraft)
@@ -219,7 +230,11 @@ export function ProductsTable({
               </tr>
             </thead>
             <tbody>
-              {filteredProducts.map((product) => (
+              {filteredProducts.map((product) => {
+                const variantMode = getVariantMode(product)
+                const isVariantProduct = variantMode !== "none"
+
+                return (
                 <tr key={product.id} className="border-b border-zinc-100">
                   <td className="px-3 py-4">
                     <div className="flex items-center gap-3">
@@ -228,9 +243,22 @@ export function ProductsTable({
                         alt={product.name}
                         className="size-10 rounded-lg object-cover"
                       />
-                      <p className="line-clamp-1 text-sm font-medium text-zinc-900">
-                        {product.name}
-                      </p>
+                      <div>
+                        <p className="line-clamp-1 text-sm font-medium text-zinc-900">
+                          {product.name}
+                        </p>
+                        <span
+                          className={cn(
+                            "mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium",
+                            isVariantProduct
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-zinc-100 text-zinc-600"
+                          )}
+                        >
+                          {getVariantModeLabel(variantMode)}
+                          {isVariantProduct ? " · Draft only" : ""}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td className="px-3 py-4 text-sm text-zinc-900">
@@ -240,7 +268,11 @@ export function ProductsTable({
                     {formatNaira(product.price)}
                   </td>
                   <td className="px-3 py-4">
-                    {canManage && editingStockId === product.id ? (
+                    {isVariantProduct ? (
+                      <span className="text-xs font-medium text-amber-700">
+                        Managed per combination
+                      </span>
+                    ) : canManage && editingStockId === product.id ? (
                       <Input
                         type="number"
                         value={stockDraft}
@@ -288,7 +320,11 @@ export function ProductsTable({
                       )}
                   </td>
                   <td className="px-3 py-4">
-                    {canManage ? (
+                    {isVariantProduct ? (
+                      <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                        Draft only
+                      </span>
+                    ) : canManage ? (
                       <button
                         type="button"
                         disabled={isPending}
@@ -324,14 +360,16 @@ export function ProductsTable({
                         >
                           <Pencil className="size-4" />
                         </Link>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(product)}
-                          className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-200 text-red-500 transition-colors hover:border-red-200 hover:bg-red-50"
-                          aria-label={`Delete ${product.name}`}
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
+                        {!isVariantProduct && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(product)}
+                            className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-200 text-red-500 transition-colors hover:border-red-200 hover:bg-red-50"
+                            aria-label={`Delete ${product.name}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <span className="block text-right text-xs font-medium text-zinc-500">
@@ -340,7 +378,8 @@ export function ProductsTable({
                     )}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
