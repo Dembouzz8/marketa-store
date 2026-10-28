@@ -605,12 +605,36 @@ passed. No real checkout or payment was performed, and no production variant
 write was used for the smoke test; variant write behavior was validated in the
 disposable database.
 
-Batch 2B1 does not enable customer-facing variant purchasing. Variant products
-remain subject to the draft-only publication restrictions. Customer variant
-selection, cart and checkout integration, paid-order variant stock
-finalization, and later variant phases remain deferred.
+**Batch 2B2 is COMPLETE, deployed, and production smoke-tested for its approved
+vendor-interface scope.** The production application release is commit
+`db704cd8df26a16e480b8cb26cd59e9440ba6aa0`. Active sellers can configure
+eligible inactive drafts as size-only, colour-only, or combined
+size-and-colour products. The interface supports draft variant creation and
+management, label editing, optimistic stock-version protected stock updates,
+and combination deletion. Conversion eligibility restrictions remain in
+force, and ordinary-product behavior is preserved.
 
-**Next development batch:** Batch 2B2 — Vendor Sizes and Colours Interface.
+Production migration
+`20261026164616_restrict_variant_parent_product_deletion.sql` adds the
+restrictive authenticated DELETE policy for variant parents. Combined with
+the unchanged active-vendor ownership policy, it preserves eligible ordinary
+product deletion while preventing authenticated vendor deletion of every
+variant parent, including an unused draft.
+
+Release validation recorded 657 automated tests, seven authenticated
+disposable security tests, and 15 disposable browser scenarios. The
+disposable fixtures were fully removed and the original baseline restored.
+Production verification confirmed the migration, a Ready Vercel deployment,
+correct vendor product display and edit pages, the Product Variants section,
+blocked configuration for ineligible products, retained ordinary-product
+controls, and unaffected customer catalogue and existing product-detail
+display.
+
+Batch 2B2 does not enable end-to-end customer variant commerce. Variant
+parents remain draft-only and cannot be published. Customer size or colour
+selection, purchase of a specific variant, variant-aware cart and checkout,
+and variant-aware order and payment processing remain deferred to separately
+approved work.
 
 ### Phase 4 — Customer experience
 

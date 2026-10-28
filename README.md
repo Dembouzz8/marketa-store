@@ -301,6 +301,25 @@ Application-generated names use
 is public, an exact known public object URL remains fetchable independently of
 product or vendor listing visibility.
 
+### Product variants
+
+Product Variants Batch 2B2 is deployed to production. Active sellers can
+configure eligible inactive drafts with size-only, colour-only, or combined
+size-and-colour variants; add, relabel, update stock for, and remove variant
+combinations; and receive controlled feedback when optimistic stock-version
+checks detect a concurrent update. Existing ordinary-product creation,
+editing, activation, and deletion remain available.
+
+The production database applies
+`20261026164616_restrict_variant_parent_product_deletion.sql`. Its restrictive
+DELETE policy works with the existing active-owner policy so authenticated
+sellers cannot delete variant-parent products, including unused drafts,
+while eligible ordinary products retain their existing delete path.
+
+Batch 2B2 keeps variant parents draft-only. Customer-facing size or colour
+selection, variant-parent publication, variant-specific purchases, and
+variant-aware cart, checkout, order, and payment processing remain deferred.
+
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation
 callback/origin configuration, and public Auth-email links. The hosted

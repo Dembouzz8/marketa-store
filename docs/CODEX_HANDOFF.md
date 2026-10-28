@@ -1,19 +1,19 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-10-08. Recheck the repository, linked migrations, and live
+Snapshot: 2026-10-28. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `674b3a48b21e23c1a0d2972f962d7e2d1d47c14d`
-  (`complete paid order stock integrity`).
+- HEAD: `db704cd8df26a16e480b8cb26cd59e9440ba6aa0f`
+  (`feat: add secure vendor product variant management`).
 - Local `origin/main`: the same commit.
 - The working tree was clean before this documentation update. This batch
   changes only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`.
-- The repository and linked database contain 24 applied migrations through
-  `20261007135410_add_atomic_paid_order_stock_finalization.sql`.
+- The repository and linked database contain 28 applied migrations through
+  `20261026164616_restrict_variant_parent_product_deletion.sql`.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -44,6 +44,37 @@ notification delivery ledger, the provider-neutral dispatcher, and the direct
 Resend adapter are implemented. Real paid-order delivery is paused only at the
 sender enablement boundary described below; that pause does not block
 independent Marketa operations work.
+
+## Product Variants status
+
+**Batches 2B1 and 2B2 are complete for their approved backend and vendor UI
+scopes.** Batch 2B1 installed the secure five-RPC management backend and the
+supporting order-item index. Batch 2B2 application commit
+`db704cd8df26a16e480b8cb26cd59e9440ba6aa0f` is deployed at
+`https://marketa-store.vercel.app` against production Supabase project
+`jznuklvrhfivbdsxgiwv`.
+
+The vendor interface supports size-only, colour-only, and combined
+size-and-colour draft variants; combination creation and deletion; label
+editing; and optimistic stock-version protected stock updates. It restricts
+ordinary-to-variant conversion to eligible drafts and preserves existing
+ordinary-product behavior. Production migration
+`20261026164616_restrict_variant_parent_product_deletion.sql` adds the
+restrictive authenticated DELETE boundary: the existing active-owner policy
+still governs ownership and activation, while variant-parent deletion is
+denied even for unused drafts.
+
+Accepted release evidence comprises 657 automated tests, seven authenticated
+disposable security tests, 15 disposable browser scenarios, complete fixture
+cleanup with baseline restoration, verified production migration state, a
+Ready Vercel deployment, and production smoke checks of vendor product lists,
+edit pages, the variants section, eligibility enforcement, ordinary-product
+controls, the customer catalogue, and existing product-detail pages.
+
+Customer-facing variant commerce remains deferred. Variant parents remain
+draft-only and cannot be published. Customer size or colour selection,
+variant-specific purchases, variant-aware cart and checkout, and variant-aware
+order and payment processing are not part of Batch 2B2.
 
 ## Vendor provisioning status
 
@@ -501,6 +532,9 @@ Completed:
 - Dispatcher authentication and provider-disabled production deployment.
 - Ops 4 paid-order stock integrity through production-applied Ops 4C and its
   controlled production purchase proof.
+- Product Variants Batches 2B1 and 2B2 through the production-deployed secure
+  management backend, vendor sizes and colours interface, and restrictive
+  variant-parent deletion boundary.
 
 Paused:
 
@@ -552,12 +586,16 @@ Deferred validation:
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
 - Existing product/storefront cleanup remains a separate backlog.
+- Customer-facing variant selection and publication, variant-specific
+  purchasing, and variant-aware cart, checkout, order, and payment processing
+  remain deferred beyond Batch 2B2.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the repository and
-stated production state through production-complete Ops 4 at `674b3a4`.
-Real paid-order delivery remains paused before provider enablement. No
+stated production state through production-complete Product Variants Batch
+2B2 at `db704cd`. Real paid-order delivery remains paused before provider
+enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

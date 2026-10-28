@@ -37,8 +37,9 @@ The Docker catalog-cache warning did not prevent deployment.
 Batch 2B1 does not enable customer-facing variant purchasing. Variant products
 remain subject to the draft-only publication restrictions. Customer variant
 selection, checkout integration, and later variant phases remain deferred.
-The next development batch is **Batch 2B2 — Vendor Sizes and Colours
-Interface**.
+At the Batch 2B1 checkpoint, the next planned development batch was **Batch
+2B2 — Vendor Sizes and Colours Interface**. Its completed production status is
+recorded in `STOREFRONT_V2.md` and `docs/CODEX_HANDOFF.md`.
 
 ## Fixed targets and artifacts
 
