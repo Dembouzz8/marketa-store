@@ -85,7 +85,7 @@ const { parseVariantStock, validateVariantLabels } = loadValidationHelpers()
 test("vendor-only types mirror product and product-variant authority", () => {
   assert.match(
     types,
-    /export type ProductVariantMode = "none" \| "size" \| "colour" \| "size_colour"/
+    /export type ProductVariantMode =[\s\S]*\| "none"[\s\S]*\| "size"[\s\S]*\| "colour"[\s\S]*\| "size_colour"[\s\S]*\| "options"/
   )
   assert.match(types, /export interface VendorProduct extends Product/)
   assert.match(types, /variant_mode: ProductVariantMode/)
@@ -324,8 +324,11 @@ test("variant reads and writes use the authenticated SSR browser session", () =>
   assert.match(editPage, /createSupabaseServerClient\(\)/)
   assert.match(editPage, /supabase\.auth\.getUser\(\)/)
   assert.match(editPage, /\.from\("product_variants"\)/)
-  assert.match(editPage, /error: variantsError/)
-  assert.match(editPage, /initialLoadFailed=\{Boolean\(variantsError\)\}/)
+  assert.match(editPage, /variantsResponse/)
+  assert.match(
+    editPage,
+    /initialLoadFailed=\{Boolean\(variantsResponse\.error\)\}/
+  )
   assert.match(manager, /initialLoadFailed \? \(/)
   assert.match(manager, /Variant management is unavailable until the product data is reloaded\./)
   assert.match(browserHelper, /NEXT_PUBLIC_SUPABASE_ANON_KEY/)

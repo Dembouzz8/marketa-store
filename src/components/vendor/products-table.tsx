@@ -52,6 +52,7 @@ function getVariantModeLabel(mode: ProductVariantMode) {
   if (mode === "size") return "Sizes"
   if (mode === "colour") return "Colours"
   if (mode === "size_colour") return "Sizes + colours"
+  if (mode === "options") return "Universal options"
   return "Ordinary"
 }
 

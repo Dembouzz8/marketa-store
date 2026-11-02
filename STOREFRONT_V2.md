@@ -636,6 +636,40 @@ selection, purchase of a specific variant, variant-aware cart and checkout,
 and variant-aware order and payment processing remain deferred to separately
 approved work.
 
+**Universal Product Variants Batches 2C-B1 and 2C-B2 are COMPLETE and deployed
+for their approved database scopes.** B1 installs the additive canonical
+category and generalized option foundation, including curated definitions,
+units, sizing systems, category templates, bounded product axes and values,
+explicit combination identity, and concurrency-safe draft integrity. B2
+installs the secure vendor RPC contracts that manage this foundation while
+preserving the existing five legacy size/colour RPCs and their compatibility
+boundaries.
+
+**Batch 2C-B3 is IMPLEMENTED AND LOCALLY VALIDATED; its production application
+deployment has not yet been independently verified.** The vendor product edit
+flow now integrates canonical category selection and the universal option
+manager. Eligible drafts can use category option templates, configure up to
+three axes, select units and sizing systems, manage option values, create and
+remove explicit combinations, and manage draft variant stock with optimistic
+stock-version conflict protection through the secure B2 RPCs. Existing
+size-only, colour-only, and combined size-and-colour workflows remain
+compatible.
+
+Authenticated browser validation against the disposable project completed and
+the fixtures were cleaned up. After the final B3 corrections, 39 focused tests
+passed. Separately, an earlier validation run recorded 712 passing repository
+tests and a passing production build.
+
+B3 does not enable generalized variant publication or customer purchasing.
+Generic variants remain draft-only; public customer selectors, cart and
+checkout contracts, Paystack integration, and payment finalization are
+unchanged. The remaining sequence is:
+
+- **2C-C — Inventory and order authority**
+- **2C-D — Cart and checkout integration**
+- **2C-E — Customer option selection and UI**
+- **2C-F — Controlled publication**
+
 ### Phase 4 — Customer experience
 
 **Status: Complete for MVP.**

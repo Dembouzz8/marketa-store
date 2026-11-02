@@ -353,7 +353,9 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
           </span>
           {isVariantProduct ? (
             <div className="flex h-11 items-center rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-600">
-              Managed per size or colour combination
+              {product?.variant_mode === "options"
+                ? "Managed per option combination"
+                : "Managed per size or colour combination"}
             </div>
           ) : (
             <>

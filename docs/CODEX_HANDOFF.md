@@ -1,19 +1,22 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-10-28. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-02. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `db704cd8df26a16e480b8cb26cd59e9440ba6aa0f`
-  (`feat: add secure vendor product variant management`).
+- HEAD: `85fa9a05bdb8933e937eb1d5c790fbbeda268b34`
+  (`feat: add generalized vendor product option management`).
 - Local `origin/main`: the same commit.
-- The working tree was clean before this documentation update. This batch
-  changes only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`.
-- The repository and linked database contain 28 applied migrations through
-  `20261026164616_restrict_variant_parent_product_deletion.sql`.
+- Before this documentation update, the working tree contained the eight
+  reviewed Batch 2C-B3 application/test files listed in the Product Variants
+  section below. This documentation batch changes only `docs/CODEX_HANDOFF.md`,
+  `README.md`, and `STOREFRONT_V2.md` in addition to those existing files.
+- Universal Product Variants Batches 2C-B1 and 2C-B2 are applied to the linked
+  production database through
+  `20261101211734_add_generalized_vendor_option_management.sql`.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -75,6 +78,38 @@ Customer-facing variant commerce remains deferred. Variant parents remain
 draft-only and cannot be published. Customer size or colour selection,
 variant-specific purchases, variant-aware cart and checkout, and variant-aware
 order and payment processing are not part of Batch 2B2.
+
+**Universal Product Variants Batches 2C-B1 and 2C-B2 are production-deployed
+for their approved database scopes.** B1 supplies the additive canonical
+category and generalized option foundation. B2 supplies the secure vendor RPC
+contracts for generalized axes, values, explicit combinations, and draft stock
+management while preserving legacy size/colour compatibility.
+
+**Batch 2C-B3 is implemented and locally validated but is not yet committed or
+independently verified as deployed in production.** Its eight existing
+working-tree files are:
+
+- `src/app/vendor/products/[id]/edit/page.tsx`
+- `src/components/vendor/product-form.tsx`
+- `src/components/vendor/product-options-manager.tsx`
+- `src/components/vendor/product-variants-manager.tsx`
+- `src/components/vendor/products-table.tsx`
+- `src/types/index.ts`
+- `tests/generalized-vendor-option-ui.test.mjs`
+- `tests/product-variants-vendor-ui.test.mjs`
+
+The product edit flow integrates canonical category selection and a universal
+option manager with category templates, up to three axes, units and sizing
+systems, option values, explicit combinations, draft variant stock management,
+and optimistic stock-version conflict protection through the secure B2 RPCs.
+Authenticated disposable browser validation completed and its fixtures were
+removed. The final corrected B3 run passed 39 focused tests; separately, an
+earlier run passed 712 repository tests and the production build.
+
+Generic variants remain draft-only. B3 leaves public customer selectors,
+checkout, Paystack, and payment finalization unchanged. The remaining sequence
+is 2C-C inventory and order authority, 2C-D cart and checkout integration, 2C-E
+customer option selection and UI, and 2C-F controlled publication.
 
 ## Vendor provisioning status
 
@@ -535,6 +570,11 @@ Completed:
 - Product Variants Batches 2B1 and 2B2 through the production-deployed secure
   management backend, vendor sizes and colours interface, and restrictive
   variant-parent deletion boundary.
+- Universal Product Variants Batches 2C-B1 and 2C-B2 through their
+  production-deployed category/option foundation and secure generalized
+  management RPCs.
+- Batch 2C-B3 implementation and local validation for the universal vendor
+  option interface; production application deployment remains pending.
 
 Paused:
 
@@ -586,16 +626,20 @@ Deferred validation:
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
 - Existing product/storefront cleanup remains a separate backlog.
+- Generic variants remain draft-only. The planned continuation is 2C-C
+  inventory and order authority, 2C-D cart and checkout integration, 2C-E
+  customer option selection and UI, and 2C-F controlled publication.
 - Customer-facing variant selection and publication, variant-specific
   purchasing, and variant-aware cart, checkout, order, and payment processing
-  remain deferred beyond Batch 2B2.
+  remain unavailable until those later stages are implemented and validated.
 
 ## Documentation alignment
 
-This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the repository and
-stated production state through production-complete Product Variants Batch
-2B2 at `db704cd`. Real paid-order delivery remains paused before provider
-enablement. No
+This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
+state through production-deployed Universal Product Variants Batches 2C-B1 and
+2C-B2, plus the uncommitted and locally validated Batch 2C-B3 working tree at
+`85fa9a0`. B3 application deployment is not yet independently verified. Real
+paid-order delivery remains paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

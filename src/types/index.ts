@@ -11,11 +11,101 @@ export interface Product {
   created_at: string
 }
 
-export type ProductVariantMode = "none" | "size" | "colour" | "size_colour"
+export type ProductVariantMode =
+  | "none"
+  | "size"
+  | "colour"
+  | "size_colour"
+  | "options"
 
 export interface VendorProduct extends Product {
   variant_mode: ProductVariantMode
+  category_code: string | null
   stock_version: number
+}
+
+export type ProductOptionValueKind = "label" | "measurement" | "colour"
+
+export interface VendorOptionCategory {
+  code: string
+  name: string
+  sort_order: number
+}
+
+export interface VendorOptionDefinition {
+  code: string
+  name: string
+  value_kind: ProductOptionValueKind
+  dimension_code: string | null
+  requires_unit: boolean
+  requires_size_system: boolean
+  sort_order: number
+}
+
+export interface VendorOptionUnit {
+  code: string
+  name: string
+  symbol: string
+  dimension_code: string
+  sort_order: number
+}
+
+export interface VendorOptionSizeSystem {
+  code: string
+  name: string
+  sort_order: number
+}
+
+export interface VendorOptionTemplate {
+  category_code: string
+  option_code: string
+  sort_order: number
+  default_unit_code: string | null
+  default_size_system_code: string | null
+}
+
+export interface VendorOptionReferenceData {
+  categories: VendorOptionCategory[]
+  options: VendorOptionDefinition[]
+  units: VendorOptionUnit[]
+  size_systems: VendorOptionSizeSystem[]
+  templates: VendorOptionTemplate[]
+}
+
+export interface VendorProductOptionValue {
+  id: string
+  display_label: string
+  numeric_value: number | null
+  swatch_hex: string | null
+  sort_order: number
+}
+
+export interface VendorProductOptionAxis {
+  id: string
+  option_code: string
+  display_name: string
+  position: number
+  unit_code: string | null
+  size_system_code: string | null
+  values: VendorProductOptionValue[]
+}
+
+export interface VendorProductOptionVariant {
+  id: string
+  stock: number
+  stock_version: number
+  is_active: boolean
+  selected_value_ids: string[]
+}
+
+export interface VendorProductOptionConfiguration {
+  product_id: string
+  category_code: string | null
+  variant_mode: ProductVariantMode
+  is_active: boolean
+  parent_stock: number
+  axes: VendorProductOptionAxis[]
+  variants: VendorProductOptionVariant[]
 }
 
 export interface ProductVariant {

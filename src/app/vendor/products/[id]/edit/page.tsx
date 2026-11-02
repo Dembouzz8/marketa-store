@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
+import { ProductOptionsManager } from "@/components/vendor/product-options-manager"
 import { ProductForm } from "@/components/vendor/product-form"
 import { ProductVariantsManager } from "@/components/vendor/product-variants-manager"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
@@ -59,16 +60,29 @@ export default async function EditProductPage({
   if (!productData) redirect("/vendor/products")
 
   const product = productData as VendorProduct
-  const { data: variantsData, error: variantsError } = await supabase
-    .from("product_variants")
-    .select(
-      "id, product_id, vendor_id, size, colour, size_normalized, colour_normalized, stock, stock_version, is_active, created_at, updated_at"
-    )
-    .eq("product_id", product.id)
-    .eq("vendor_id", vendor.id)
-    .order("created_at", { ascending: true })
+  const shouldLoadUniversalOptions =
+    product.variant_mode === "none" || product.variant_mode === "options"
+  const [variantsResponse, referenceResponse, configurationResponse] =
+    await Promise.all([
+      supabase
+        .from("product_variants")
+        .select(
+          "id, product_id, vendor_id, size, colour, size_normalized, colour_normalized, stock, stock_version, is_active, created_at, updated_at"
+        )
+        .eq("product_id", product.id)
+        .eq("vendor_id", vendor.id)
+        .order("created_at", { ascending: true }),
+      shouldLoadUniversalOptions
+        ? supabase.rpc("get_vendor_option_reference_data")
+        : Promise.resolve({ data: null, error: null }),
+      shouldLoadUniversalOptions
+        ? supabase.rpc("get_vendor_product_option_configuration", {
+            p_product_id: product.id,
+          })
+        : Promise.resolve({ data: null, error: null }),
+    ])
 
-  const variants = (variantsData ?? []) as ProductVariant[]
+  const variants = (variantsResponse.data ?? []) as ProductVariant[]
 
   async function handleSuccess() {
     "use server"
@@ -89,12 +103,25 @@ export default async function EditProductPage({
         vendorId={vendor.id}
         onSuccess={handleSuccess}
       />
-      <ProductVariantsManager
-        key={`${product.id}:${product.variant_mode}`}
-        product={product}
-        initialVariants={variants}
-        initialLoadFailed={Boolean(variantsError)}
-      />
+      {product.variant_mode !== "options" ? (
+        <ProductVariantsManager
+          key={`legacy:${product.id}:${product.variant_mode}`}
+          product={product}
+          initialVariants={variants}
+          initialLoadFailed={Boolean(variantsResponse.error)}
+        />
+      ) : null}
+      {shouldLoadUniversalOptions ? (
+        <ProductOptionsManager
+          key={`options:${product.id}:${product.variant_mode}`}
+          product={product}
+          initialReferenceRows={referenceResponse.data}
+          initialConfigurationRows={configurationResponse.data}
+          initialLoadFailed={Boolean(
+            referenceResponse.error || configurationResponse.error
+          )}
+        />
+      ) : null}
     </div>
   )
 }

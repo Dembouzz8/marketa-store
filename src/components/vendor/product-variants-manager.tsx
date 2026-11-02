@@ -42,13 +42,15 @@ type ConfigureResult = {
   configured_variant_mode: ProductVariantMode | null
 }
 
+type LegacyVariantMode = Exclude<ProductVariantMode, "none" | "options">
+
 const MAX_LABEL_LENGTH = 80
 const MAX_POSTGRES_INTEGER = 2_147_483_647
 
 const variantSelect =
   "id, product_id, vendor_id, size, colour, size_normalized, colour_normalized, stock, stock_version, is_active, created_at, updated_at"
 
-const modeLabels: Record<Exclude<ProductVariantMode, "none">, string> = {
+const modeLabels: Record<LegacyVariantMode, string> = {
   size: "Sizes",
   colour: "Colours",
   size_colour: "Sizes and colours",
@@ -114,7 +116,7 @@ function cleanLabel(value: string) {
 }
 
 export function validateVariantLabels(
-  mode: Exclude<ProductVariantMode, "none">,
+  mode: LegacyVariantMode,
   sizeInput: string,
   colourInput: string
 ): { ok: true; labels: VariantLabels } | { ok: false; message: string } {
@@ -187,7 +189,7 @@ export function ProductVariantsManager({
       : null
   )
   const [selectedMode, setSelectedMode] = useState<
-    Exclude<ProductVariantMode, "none">
+    LegacyVariantMode
   >("size")
   const [modeConfirmed, setModeConfirmed] = useState(false)
   const [createSize, setCreateSize] = useState("")
@@ -201,6 +203,7 @@ export function ProductVariantsManager({
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
 
   const mode = product.variant_mode ?? "none"
+  if (mode === "options") return null
   const isEligibleByVisibleState =
     mode === "none" && product.is_active === false && product.stock === 0
 
@@ -587,7 +590,7 @@ export function ProductVariantsManager({
               value={selectedMode}
               onChange={(event) => {
                 setSelectedMode(
-                  event.target.value as Exclude<ProductVariantMode, "none">
+                  event.target.value as LegacyVariantMode
                 )
                 setModeConfirmed(false)
               }}

@@ -320,6 +320,29 @@ Batch 2B2 keeps variant parents draft-only. Customer-facing size or colour
 selection, variant-parent publication, variant-specific purchases, and
 variant-aware cart, checkout, order, and payment processing remain deferred.
 
+Universal Product Variants Batches 2C-B1 and 2C-B2 are deployed to the
+production database. B1 provides the canonical category, option-definition,
+unit, sizing-system, template, axis, value, combination-identity, and draft
+integrity foundation. B2 provides the secure vendor RPC contracts for managing
+that foundation while preserving the legacy size/colour paths.
+
+Batch 2C-B3 is implemented and locally validated, but its application release
+has not yet been committed or independently verified in production. The
+product editor now integrates canonical category selection and a universal
+option manager with category templates, up to three axes, units and sizing
+systems, option values, explicit combinations, draft variant stock management,
+and optimistic stock-version conflict protection through the B2 RPCs. Legacy
+size-only, colour-only, and size-and-colour management remains compatible.
+Authenticated disposable browser validation passed and its fixtures were
+removed. The final corrected B3 run passed 39 focused tests; an earlier run
+passed 712 repository tests and the production build.
+
+Generic variants remain draft-only. Customer selection and purchasing,
+variant-aware cart and checkout, payment finalization changes, and controlled
+publication remain unavailable. The planned sequence is 2C-C inventory and
+order authority, 2C-D cart and checkout integration, 2C-E customer option
+selection and UI, and 2C-F controlled publication.
+
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation
 callback/origin configuration, and public Auth-email links. The hosted
