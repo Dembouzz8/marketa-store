@@ -645,12 +645,11 @@ installs the secure vendor RPC contracts that manage this foundation while
 preserving the existing five legacy size/colour RPCs and their compatibility
 boundaries.
 
-**Batch 2C-B3 is IMPLEMENTED AND LOCALLY VALIDATED; its production application
-deployment has not yet been independently verified.** The vendor product edit
-flow now integrates canonical category selection and the universal option
-manager. Eligible drafts can use category option templates, configure up to
-three axes, select units and sizing systems, manage option values, create and
-remove explicit combinations, and manage draft variant stock with optimistic
+**Batch 2C-B3 is COMPLETE AND DEPLOYED.** The vendor product edit flow
+integrates canonical category selection and the universal option manager.
+Eligible drafts can use category option templates, configure up to three axes,
+select units and sizing systems, manage option values, create and remove
+explicit combinations, and manage draft variant stock with optimistic
 stock-version conflict protection through the secure B2 RPCs. Existing
 size-only, colour-only, and combined size-and-colour workflows remain
 compatible.
@@ -661,14 +660,62 @@ passed. Separately, an earlier validation run recorded 712 passing repository
 tests and a passing production build.
 
 B3 does not enable generalized variant publication or customer purchasing.
-Generic variants remain draft-only; public customer selectors, cart and
-checkout contracts, Paystack integration, and payment finalization are
-unchanged. The remaining sequence is:
 
-- **2C-C — Inventory and order authority**
+**Batch 2C-C1 architecture reconciliation is COMPLETE. Batch 2C-C2 is COMPLETE
+AND PRODUCTION-DEPLOYED** through
+`20261103084943_add_generalized_order_item_variant_snapshot.sql`. C2 adds a
+versioned JSONB option snapshot, a strict immutable and table-free validator,
+the composite variant ownership foreign key, generalized order-item identity
+constraints, and historical snapshot immutability. Production installation
+and read-only verification passed. Production project
+`jznuklvrhfivbdsxgiwv` subsequently advanced through C3 as recorded below.
+
+The project owner explicitly waived a fresh C2 production backup and accepted
+the resulting recovery risk.
+
+**Batch 2C-C3 is COMPLETE, PRODUCTION-DEPLOYED, AND INDEPENDENTLY VERIFIED.**
+Migration `20261104092307_add_variant_aware_paid_order_finalization.sql`
+advanced the production ledger to 32 migrations through `20261104092307`. The
+installed `public.finalize_paystack_paid_order(...)` definition has MD5
+`74a760039e13ce5ff09e3b9ef76d7c21`, remains `SECURITY INVOKER` with an empty
+`search_path`, and remains executable only by `service_role` among application
+roles. C3 grants service role only `UPDATE(stock)` on
+`public.product_variants`, plus the two private read authorities required to
+resolve authoritative generalized combination identity.
+
+The existing Paystack finalizer now applies the correct inventory authority:
+ordinary items deduct `products.stock`; variant items deduct
+`product_variants.stock` and never deduct parent stock. Mixed ordinary/variant
+orders, repeated rows for one variant, and multi-vendor orders are supported.
+Inventory mutation, order confirmation, vendor sale credits, and creation of
+the paid-order outbox parent remain atomic, while payment replay remains
+idempotent.
+
+Disposable PostgreSQL validation covered real two-session concurrency,
+insufficient-stock reconciliation, payment replay, stock-version behavior, and
+injected financial rollback. One NULL-safety harness assertion expected a
+uniform diagnostic code across every safe reconciliation outcome and did not
+pass; this was a diagnostic assertion limitation, not a financial-safety
+failure. Production installation preserved all existing stock, orders,
+payments, ledger entries, and outbox rows. No live production payment was
+executed during deployment.
+
+The existing order-item variant purchase-insertion guard remains enabled and
+unchanged. C3 does not provide a trusted variant checkout request or customer
+option-selection interface. Generic variants remain draft-only; customer
+variant purchasing and publication remain disabled. The project owner
+explicitly waived a fresh C3 production backup and accepted reduced recovery
+protection for this deployment.
+
+Later controlled stages remain:
+
 - **2C-D — Cart and checkout integration**
 - **2C-E — Customer option selection and UI**
 - **2C-F — Controlled publication**
+
+The next engineering work is a separately approved design for controlled
+customer-facing option selection and trusted checkout integration. None of
+those customer purchase paths is implemented by C3.
 
 ### Phase 4 — Customer experience
 
@@ -726,7 +773,7 @@ finalization. The dispatcher is not payment authority.
 `verify_jwt=false` plus internal bearer authentication through
 `MARKETA_DISPATCHER_SECRET`. Its HTTP/authentication and provider-disabled
 gates were proven without claiming a pending parent. Production currently has
-27 applied migrations through `20261026072004`, two pending paid-order parents
+32 applied migrations through `20261104092307`, two pending paid-order parents
 while dispatcher scheduling is paused, zero notification delivery rows, and
 no `pg_cron`, `pg_net`, or scheduler. The second parent was created by the
 controlled Ops 4 production purchase proof.

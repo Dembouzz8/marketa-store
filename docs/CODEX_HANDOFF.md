@@ -1,22 +1,24 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-11-02. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-04. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `85fa9a05bdb8933e937eb1d5c790fbbeda268b34`
-  (`feat: add generalized vendor product option management`).
+- HEAD: `dd259eb4ca034d8e496bea16b405ef3049895928`
+  (`feat(db): add immutable generalized variant order snapshots`).
 - Local `origin/main`: the same commit.
-- Before this documentation update, the working tree contained the eight
-  reviewed Batch 2C-B3 application/test files listed in the Product Variants
-  section below. This documentation batch changes only `docs/CODEX_HANDOFF.md`,
-  `README.md`, and `STOREFRONT_V2.md` in addition to those existing files.
-- Universal Product Variants Batches 2C-B1 and 2C-B2 are applied to the linked
-  production database through
-  `20261101211734_add_generalized_vendor_option_management.sql`.
+- Before this documentation update, the three canonical documentation files
+  already contained uncommitted B3/C2 status edits, and the approved C3
+  migration and focused test were untracked. This documentation batch modifies
+  only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md` while
+  preserving those existing changes.
+- Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, and 2C-C3 are applied
+  to the linked production database through
+  `20261104092307_add_variant_aware_paid_order_finalization.sql`. The production
+  ledger contains 32 migrations.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -85,31 +87,55 @@ category and generalized option foundation. B2 supplies the secure vendor RPC
 contracts for generalized axes, values, explicit combinations, and draft stock
 management while preserving legacy size/colour compatibility.
 
-**Batch 2C-B3 is implemented and locally validated but is not yet committed or
-independently verified as deployed in production.** Its eight existing
-working-tree files are:
+**Batch 2C-B3 is deployed.** The product edit flow integrates canonical
+category selection and a universal option manager with category templates, up
+to three axes, units and sizing systems, option values, explicit combinations,
+draft variant stock management, and optimistic stock-version conflict
+protection through the secure B2 RPCs. Authenticated disposable browser
+validation completed and its fixtures were removed. The final corrected B3
+run passed 39 focused tests; separately, an earlier run passed 712 repository
+tests and the production build.
 
-- `src/app/vendor/products/[id]/edit/page.tsx`
-- `src/components/vendor/product-form.tsx`
-- `src/components/vendor/product-options-manager.tsx`
-- `src/components/vendor/product-variants-manager.tsx`
-- `src/components/vendor/products-table.tsx`
-- `src/types/index.ts`
-- `tests/generalized-vendor-option-ui.test.mjs`
-- `tests/product-variants-vendor-ui.test.mjs`
+**Batch 2C-C1 architecture reconciliation is complete. Batch 2C-C2 is deployed
+and independently verified in production.** Migration
+`20261103084943_add_generalized_order_item_variant_snapshot.sql` adds versioned
+JSONB option snapshots, strict immutable validation, a composite variant
+ownership foreign key, generalized order-item identity constraints, and
+historical snapshot immutability. Installation and read-only verification
+passed with the existing purchase guard, financial finalizer, stock function,
+RLS, grants, and historical business rows preserved.
 
-The product edit flow integrates canonical category selection and a universal
-option manager with category templates, up to three axes, units and sizing
-systems, option values, explicit combinations, draft variant stock management,
-and optimistic stock-version conflict protection through the secure B2 RPCs.
-Authenticated disposable browser validation completed and its fixtures were
-removed. The final corrected B3 run passed 39 focused tests; separately, an
-earlier run passed 712 repository tests and the production build.
+The project owner explicitly waived a fresh C2 production backup and accepted
+the recovery risk.
 
-Generic variants remain draft-only. B3 leaves public customer selectors,
-checkout, Paystack, and payment finalization unchanged. The remaining sequence
-is 2C-C inventory and order authority, 2C-D cart and checkout integration, 2C-E
-customer option selection and UI, and 2C-F controlled publication.
+**Batch 2C-C3 atomic variant-aware payment finalization is deployed and
+independently verified in production.** Migration
+`20261104092307_add_variant_aware_paid_order_finalization.sql` advanced the
+production ledger to 32 migrations. The installed finalizer MD5 is
+`74a760039e13ce5ff09e3b9ef76d7c21`. It remains `SECURITY INVOKER`, retains an
+empty `search_path`, and remains service-role-only. Service-role variant write
+authority is limited to `UPDATE(stock)`.
+
+The finalizer now deducts `products.stock` for ordinary items and
+`product_variants.stock` for variant items without reducing parent stock. It
+supports mixed orders, repeated variant rows, and multi-vendor orders while
+keeping stock mutation, order confirmation, vendor credits, and paid-order
+outbox creation atomic. Payment replay remains idempotent. The order-item
+variant purchase guard remains enabled and unchanged.
+
+Disposable validation covered real concurrency, insufficient stock, replay,
+stock-version behavior, and financial rollback. A NULL-safety harness
+assertion requiring one uniform diagnostic code did not pass; safe
+reconciliation and financial rollback behavior were verified. Production
+deployment did not execute a live payment. The owner explicitly waived a fresh
+C3 production backup and accepted reduced recovery protection for C3 only.
+
+Generic variants remain draft-only. Customer option selection, trusted variant
+checkout, purchasing, and publication remain unavailable. The next engineering
+work is separate design and validation for controlled customer-facing selection
+and trusted checkout integration. Later controlled stages remain 2C-D cart and
+checkout integration, 2C-E customer option selection and UI, and 2C-F
+controlled publication.
 
 ## Vendor provisioning status
 
@@ -573,8 +599,11 @@ Completed:
 - Universal Product Variants Batches 2C-B1 and 2C-B2 through their
   production-deployed category/option foundation and secure generalized
   management RPCs.
-- Batch 2C-B3 implementation and local validation for the universal vendor
-  option interface; production application deployment remains pending.
+- Batch 2C-B3 production deployment for the universal vendor option interface.
+- Batch 2C-C1 architecture reconciliation and the production-deployed Batch
+  2C-C2 immutable generalized order snapshot foundation.
+- Batch 2C-C3 production deployment and independent verification for atomic
+  variant-aware paid-order finalization.
 
 Paused:
 
@@ -626,20 +655,23 @@ Deferred validation:
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
 - Existing product/storefront cleanup remains a separate backlog.
-- Generic variants remain draft-only. The planned continuation is 2C-C
-  inventory and order authority, 2C-D cart and checkout integration, 2C-E
-  customer option selection and UI, and 2C-F controlled publication.
+- Generic variants remain draft-only. Controlled customer-facing option
+  selection and trusted checkout integration require separate design and
+  validation through the remaining 2C-D and 2C-E work, followed by 2C-F
+  controlled publication.
 - Customer-facing variant selection and publication, variant-specific
-  purchasing, and variant-aware cart, checkout, order, and payment processing
-  remain unavailable until those later stages are implemented and validated.
+  purchasing, and variant-aware cart and checkout remain unavailable until
+  those later stages are implemented and validated. C3 provides finalizer
+  authority only; it does not enable customer purchase insertion.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
-state through production-deployed Universal Product Variants Batches 2C-B1 and
-2C-B2, plus the uncommitted and locally validated Batch 2C-B3 working tree at
-`85fa9a0`. B3 application deployment is not yet independently verified. Real
-paid-order delivery remains paused before provider enablement. No
+state through deployed Universal Product Variants Batches 2C-B1, 2C-B2,
+2C-B3, 2C-C2, and 2C-C3, with Batch 2C-C1 architecture reconciliation
+complete. Customer option selection, trusted variant checkout, and publication
+remain deferred. Real paid-order delivery remains paused before provider
+enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

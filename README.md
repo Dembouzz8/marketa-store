@@ -326,22 +326,51 @@ unit, sizing-system, template, axis, value, combination-identity, and draft
 integrity foundation. B2 provides the secure vendor RPC contracts for managing
 that foundation while preserving the legacy size/colour paths.
 
-Batch 2C-B3 is implemented and locally validated, but its application release
-has not yet been committed or independently verified in production. The
-product editor now integrates canonical category selection and a universal
-option manager with category templates, up to three axes, units and sizing
-systems, option values, explicit combinations, draft variant stock management,
-and optimistic stock-version conflict protection through the B2 RPCs. Legacy
-size-only, colour-only, and size-and-colour management remains compatible.
-Authenticated disposable browser validation passed and its fixtures were
-removed. The final corrected B3 run passed 39 focused tests; an earlier run
-passed 712 repository tests and the production build.
+**Batch 2C-B3 is deployed.** The product editor integrates canonical category
+selection and a universal option manager with category templates, up to three
+axes, units and sizing systems, option values, explicit combinations, draft
+variant stock management, and optimistic stock-version conflict protection
+through the B2 RPCs. Legacy size-only, colour-only, and size-and-colour
+management remains compatible. Authenticated disposable browser validation
+passed and its fixtures were removed. The final corrected B3 run passed 39
+focused tests; an earlier run passed 712 repository tests and the production
+build.
 
-Generic variants remain draft-only. Customer selection and purchasing,
-variant-aware cart and checkout, payment finalization changes, and controlled
-publication remain unavailable. The planned sequence is 2C-C inventory and
-order authority, 2C-D cart and checkout integration, 2C-E customer option
-selection and UI, and 2C-F controlled publication.
+**Batch 2C-C1 architecture reconciliation is complete. Batch 2C-C2 is deployed
+to production** through
+`20261103084943_add_generalized_order_item_variant_snapshot.sql`. C2 adds
+versioned JSONB option snapshots, strict immutable validation, a composite
+variant ownership foreign key, generalized order-item identity constraints,
+and historical snapshot immutability. Production installation and read-only
+verification passed.
+
+The project owner explicitly waived a fresh C2 production backup and accepted
+the resulting recovery risk.
+
+**Batch 2C-C3 atomic variant-aware payment finalization is deployed and
+independently verified in production** through
+`20261104092307_add_variant_aware_paid_order_finalization.sql`. The production
+ledger contains 32 migrations through `20261104092307`; the installed finalizer
+MD5 is `74a760039e13ce5ff09e3b9ef76d7c21`. The existing Paystack finalizer now
+deducts `products.stock` for ordinary purchases and `product_variants.stock`
+for variant purchases without reducing parent stock. Mixed orders, repeated
+variant rows, and multi-vendor orders retain atomic stock mutation, order
+confirmation, vendor credits, and paid-order outbox creation. Payment replay
+remains idempotent. Service-role variant authority is limited to
+`UPDATE(stock)`.
+
+Disposable PostgreSQL validation covered real concurrency, insufficient stock,
+replay, stock-version behavior, and financial rollback. One harness assertion
+that expected identical diagnostic codes across every NULL-safety case did not
+pass; the safe reconciliation and financial rollback behavior did. Production
+deployment did not exercise a live payment. The owner explicitly waived a
+fresh C3 production backup and accepted reduced recovery protection.
+
+The unchanged purchase-insertion guard remains enabled. Generic variants stay
+draft-only: customer option selection, trusted variant checkout, variant
+purchasing, and controlled publication remain unavailable. Controlled
+customer-facing selection and trusted checkout integration require separate
+design and validation before the later publication stage.
 
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation
