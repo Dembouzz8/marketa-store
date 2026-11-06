@@ -707,15 +707,38 @@ variant purchasing and publication remain disabled. The project owner
 explicitly waived a fresh C3 production backup and accepted reduced recovery
 protection for this deployment.
 
+**Batch 2C-D2 is COMPLETE AND PRODUCTION-INSTALLED.** Migration
+`20261105084924_add_trusted_variant_order_construction.sql` advanced production
+project `jznuklvrhfivbdsxgiwv` to 33 migrations through `20261105084924`.
+Disposable PostgreSQL validation passed for security and ACL boundaries,
+replay, legacy and generalized variant snapshots, mixed and multi-vendor
+orders, ordinary product/vendor/stock concurrency, and atomic rollback.
+Production compatibility preflight and post-install read-only verification also
+passed.
+
+`public.construct_trusted_checkout_order(...)` is an internal,
+service-role-only `SECURITY DEFINER` authority for trusted server-side order
+construction. It creates immutable variant snapshots and uses a private,
+single-use authorization for each protected order-item insertion. It does not
+deduct stock during construction and does not mutate payments, payment events,
+financial ledgers, or the paid-order outbox. The current checkout Edge Function
+does not call the D2 RPC, so the installed authority is dormant.
+
+The pre-D2 checkpoint verified application-database restoration. It does not
+demonstrate full Supabase platform disaster recovery. Variant parents and rows
+remain draft-only under the two publication constraints. True two-session
+active-variant races remain unverified and are a mandatory gate before customer
+variant purchasing is activated.
+
 Later controlled stages remain:
 
-- **2C-D — Cart and checkout integration**
-- **2C-E — Customer option selection and UI**
-- **2C-F — Controlled publication**
+- **2C-D3 — Pending:** public variant projection, customer selector, and cart
+  integration.
+- **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
+  and order-history snapshot presentation.
+- **2C-D5 — Pending:** controlled vendor variant activation and publication.
 
-The next engineering work is a separately approved design for controlled
-customer-facing option selection and trusted checkout integration. None of
-those customer purchase paths is implemented by C3.
+None of these customer purchase or publication paths is implemented by D2.
 
 ### Phase 4 — Customer experience
 

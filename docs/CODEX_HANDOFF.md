@@ -1,24 +1,23 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-11-04. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-06. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `dd259eb4ca034d8e496bea16b405ef3049895928`
-  (`feat(db): add immutable generalized variant order snapshots`).
+- HEAD: `8f321f4d89f05b336df21934e05be418b0aa1676`
+  (`feat(db): enable atomic variant-aware paid order finalization`).
 - Local `origin/main`: the same commit.
-- Before this documentation update, the three canonical documentation files
-  already contained uncommitted B3/C2 status edits, and the approved C3
-  migration and focused test were untracked. This documentation batch modifies
-  only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md` while
-  preserving those existing changes.
-- Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, and 2C-C3 are applied
-  to the linked production database through
-  `20261104092307_add_variant_aware_paid_order_finalization.sql`. The production
-  ledger contains 32 migrations.
+- Before this documentation update, only the approved D2 migration and focused
+  test were untracked. This documentation batch modifies only
+  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; the D2 source
+  artifacts remain unchanged.
+- Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, and 2C-D2 are
+  applied to the linked production database through
+  `20261105084924_add_trusted_variant_order_construction.sql`. The production
+  ledger contains 33 migrations.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -130,12 +129,33 @@ reconciliation and financial rollback behavior were verified. Production
 deployment did not execute a live payment. The owner explicitly waived a fresh
 C3 production backup and accepted reduced recovery protection for C3 only.
 
-Generic variants remain draft-only. Customer option selection, trusted variant
-checkout, purchasing, and publication remain unavailable. The next engineering
-work is separate design and validation for controlled customer-facing selection
-and trusted checkout integration. Later controlled stages remain 2C-D cart and
-checkout integration, 2C-E customer option selection and UI, and 2C-F
-controlled publication.
+**Batch 2C-D2 trusted variant order construction is complete and installed in
+production.** Migration
+`20261105084924_add_trusted_variant_order_construction.sql` advanced the ledger
+to 33 migrations. Disposable PostgreSQL validation passed for security and ACL
+boundaries, replay, legacy and generalized variant snapshots, mixed and
+multi-vendor orders, ordinary product/vendor/stock concurrency, and atomic
+rollback. Production compatibility preflight and post-install read-only
+verification passed.
+
+`public.construct_trusted_checkout_order(...)` is an internal,
+service-role-only `SECURITY DEFINER` authority. It performs trusted server-side
+order construction, creates immutable variant snapshots, and uses a private,
+single-use authorization for protected order-item insertion. Construction does
+not deduct stock or mutate payments, payment events, financial ledgers, or the
+paid-order outbox. The existing checkout Edge Function does not call this RPC;
+D2 is installed but dormant.
+
+The pre-D2 recovery checkpoint passed an application-database restore drill,
+not full Supabase platform recovery. Generic variant parents and variant rows
+remain draft-only under both publication constraints. True two-session
+active-variant races remain unverified and must be closed before customer
+variant purchasing is activated.
+
+The remaining stages are 2C-D3 public variant projection, customer selector,
+and cart integration; 2C-D4 checkout Edge Function cutover to trusted
+construction and order-history snapshot presentation; and 2C-D5 controlled
+vendor variant activation and publication. All three remain pending.
 
 ## Vendor provisioning status
 
@@ -604,6 +624,8 @@ Completed:
   2C-C2 immutable generalized order snapshot foundation.
 - Batch 2C-C3 production deployment and independent verification for atomic
   variant-aware paid-order finalization.
+- Batch 2C-D2 production installation and verification for dormant trusted
+  variant order construction.
 
 Paused:
 
@@ -655,23 +677,22 @@ Deferred validation:
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
 - Existing product/storefront cleanup remains a separate backlog.
-- Generic variants remain draft-only. Controlled customer-facing option
-  selection and trusted checkout integration require separate design and
-  validation through the remaining 2C-D and 2C-E work, followed by 2C-F
-  controlled publication.
+- Generic variants remain draft-only. D2 trusted order construction is
+  installed but dormant because the current checkout Edge Function does not
+  call it.
 - Customer-facing variant selection and publication, variant-specific
-  purchasing, and variant-aware cart and checkout remain unavailable until
-  those later stages are implemented and validated. C3 provides finalizer
-  authority only; it does not enable customer purchase insertion.
+  purchasing, and variant-aware cart and checkout remain unavailable until D3,
+  D4, and D5 are implemented and validated. True two-session active-variant
+  races remain a required publication-release gate.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
 state through deployed Universal Product Variants Batches 2C-B1, 2C-B2,
-2C-B3, 2C-C2, and 2C-C3, with Batch 2C-C1 architecture reconciliation
-complete. Customer option selection, trusted variant checkout, and publication
-remain deferred. Real paid-order delivery remains paused before provider
-enablement. No
+2C-B3, 2C-C2, 2C-C3, and 2C-D2, with Batch 2C-C1 architecture reconciliation
+complete. D2 is dormant; customer option selection, checkout cutover, and
+publication remain deferred through D3, D4, and D5. Real paid-order delivery
+remains paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

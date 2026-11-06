@@ -372,6 +372,38 @@ purchasing, and controlled publication remain unavailable. Controlled
 customer-facing selection and trusted checkout integration require separate
 design and validation before the later publication stage.
 
+**Batch 2C-D2 trusted variant order construction is complete and installed in
+production** through
+`20261105084924_add_trusted_variant_order_construction.sql`. The production
+ledger contains 33 migrations through `20261105084924`. Disposable PostgreSQL
+validation covered security and ACL boundaries, replay, legacy and generalized
+variant snapshots, mixed and multi-vendor orders, ordinary product/vendor/stock
+concurrency, and atomic rollback. Production compatibility preflight and the
+post-install read-only verification passed. The pre-D2 recovery checkpoint also
+passed an application-database restore drill; it is not evidence of full
+Supabase platform recovery.
+
+`public.construct_trusted_checkout_order(...)` is an internal,
+service-role-only authority for trusted server-side construction. It uses a
+private, single-use order-item insertion authorization and creates immutable
+variant snapshots. Construction does not deduct stock and does not mutate
+payments, payment events, financial ledgers, or the paid-order outbox. The
+existing checkout Edge Function has not been cut over to this RPC, so D2 is
+installed but dormant.
+
+Variant parents and variant rows remain draft-only under both publication
+constraints. Customer variant purchasing is not complete. True two-session
+active-variant races remain unverified and must be closed before customer
+variant purchasing is activated.
+
+The remaining controlled stages are:
+
+- **2C-D3 — Pending:** public variant projection, customer selector, and cart
+  integration.
+- **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
+  and order-history snapshot presentation.
+- **2C-D5 — Pending:** controlled vendor variant activation and publication.
+
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation
 callback/origin configuration, and public Auth-email links. The hosted
