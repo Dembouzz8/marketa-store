@@ -18,6 +18,40 @@ export type ProductVariantMode =
   | "size_colour"
   | "options"
 
+export type PublicProductVariantMode = Exclude<ProductVariantMode, "none">
+
+export interface PublicProductVariantValue {
+  id: string
+  label: string
+  position: number
+  swatch_hex: string | null
+}
+
+export interface PublicProductVariantAxis {
+  id: string
+  label: string
+  position: number
+  values: PublicProductVariantValue[]
+}
+
+export interface PublicProductVariantSelection {
+  axis_id: string
+  value_id: string
+}
+
+export interface PublicProductVariantCombination {
+  variant_id: string
+  stock: number
+  selections: PublicProductVariantSelection[]
+}
+
+export interface PublicProductVariantProjection {
+  product_id: string
+  variant_mode: PublicProductVariantMode
+  axes: PublicProductVariantAxis[]
+  combinations: PublicProductVariantCombination[]
+}
+
 export interface VendorProduct extends Product {
   variant_mode: ProductVariantMode
   category_code: string | null

@@ -7,17 +7,17 @@ repository and applied migrations take precedence over this handoff.
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `8f321f4d89f05b336df21934e05be418b0aa1676`
-  (`feat(db): enable atomic variant-aware paid order finalization`).
+- HEAD: `f013ee4a7d43010580fe152ee63103349d37fe35`.
 - Local `origin/main`: the same commit.
-- Before this documentation update, only the approved D2 migration and focused
-  test were untracked. This documentation batch modifies only
-  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; the D2 source
-  artifacts remain unchanged.
-- Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, and 2C-D2 are
-  applied to the linked production database through
-  `20261105084924_add_trusted_variant_order_construction.sql`. The production
-  ledger contains 33 migrations.
+- Before this documentation update, the working tree contained only the four
+  approved D3-A1 artifacts: modified `src/types/index.ts` and untracked parser,
+  migration, and focused test files. This documentation batch also modifies
+  only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; all four
+  D3-A1 artifacts remain unchanged.
+- Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, 2C-D2, and
+  2C-D3-A1 are applied to the linked production database through
+  `20261106105539_add_public_product_variant_projection.sql`. The production
+  ledger contains 34 migrations.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -152,10 +152,41 @@ remain draft-only under both publication constraints. True two-session
 active-variant races remain unverified and must be closed before customer
 variant purchasing is activated.
 
-The remaining stages are 2C-D3 public variant projection, customer selector,
-and cart integration; 2C-D4 checkout Edge Function cutover to trusted
-construction and order-history snapshot presentation; and 2C-D5 controlled
-vendor variant activation and publication. All three remain pending.
+**Batch 2C-D3-A1 public product and variant projection is complete and installed
+in production.** Migration
+`20261106105539_add_public_product_variant_projection.sql` advanced production
+to 34 migrations. Disposable PostgreSQL validation passed, all fixture changes
+rolled back, and the production installation plus independent read-only
+verification preserved existing business and financial data.
+
+The postgres-owned `public.public_storefront_products` view is an allowlisted
+security-invoker and security-barrier surface with anonymous and authenticated
+SELECT only. The stable, postgres-owned, `SECURITY DEFINER`
+`public.get_public_product_variant_projection(uuid)` RPC has an empty
+`search_path`, MD5 `eddab14949efe1400338ca7ee9688675`, and grants execution only
+to `anon` and `authenticated` among application roles. The C3 private-table
+grant matrix remains unchanged.
+
+D3-A1 projects deterministic legacy and generalized identities and only
+explicit eligible combinations. It preserves zero-stock combinations while
+requiring real variant stock for availability; it never falls back to parent
+stock. Application types and the fail-closed parser exist in local source, but
+the customer storefront does not call the new view or RPC yet. There is no
+checkout cutover, Paystack change, variant activation, or customer purchasing.
+D2 remains dormant and both draft-only publication constraints remain
+validated.
+
+Disposable synthetic performance was 35.760 ms with 28,515 shared hits for the
+availability filter and 23.775 ms with 22,641 shared hits for the
+100-combination projection. These figures are not production guarantees.
+Performance assessment is required before broad storefront rollout.
+
+Remaining work is 2C-D3-A2 customer option selection and product-card
+availability, 2C-D3-A3 variant cart identity and Zustand persistence migration,
+2C-D3-A4 a fail-closed variant checkout gate and comprehensive regression
+tests, 2C-D4 checkout cutover and order-history snapshot presentation, and
+2C-D5 controlled activation, publication, and final release gates. True
+two-session active-variant concurrency remains a D5 gate.
 
 ## Vendor provisioning status
 
@@ -626,6 +657,8 @@ Completed:
   variant-aware paid-order finalization.
 - Batch 2C-D2 production installation and verification for dormant trusted
   variant order construction.
+- Batch 2C-D3-A1 production installation and verification for the sanitized
+  public product view and explicit variant projection RPC.
 
 Paused:
 
@@ -680,19 +713,22 @@ Deferred validation:
 - Generic variants remain draft-only. D2 trusted order construction is
   installed but dormant because the current checkout Edge Function does not
   call it.
-- Customer-facing variant selection and publication, variant-specific
-  purchasing, and variant-aware cart and checkout remain unavailable until D3,
-  D4, and D5 are implemented and validated. True two-session active-variant
-  races remain a required publication-release gate.
+- D3-A1 read contracts are installed, but no customer storefront query uses
+  them. Customer option selection, variant cart identity, checkout integration,
+  publication, and variant-specific purchasing remain unavailable until
+  D3-A2, D3-A3, D3-A4, D4, and D5 are implemented and validated. True
+  two-session active-variant races remain a D5 publication-release gate.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
 state through deployed Universal Product Variants Batches 2C-B1, 2C-B2,
-2C-B3, 2C-C2, 2C-C3, and 2C-D2, with Batch 2C-C1 architecture reconciliation
-complete. D2 is dormant; customer option selection, checkout cutover, and
-publication remain deferred through D3, D4, and D5. Real paid-order delivery
-remains paused before provider enablement. No
+2C-B3, 2C-C2, 2C-C3, 2C-D2, and 2C-D3-A1, with Batch 2C-C1 architecture
+reconciliation complete. D2 remains dormant, and the D3-A1 read contracts are
+not integrated into customer application queries. Customer option selection,
+cart identity, checkout cutover, and publication remain deferred through
+D3-A2, D3-A3, D3-A4, D4, and D5. Real paid-order delivery remains paused
+before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

@@ -396,13 +396,45 @@ constraints. Customer variant purchasing is not complete. True two-session
 active-variant races remain unverified and must be closed before customer
 variant purchasing is activated.
 
+**Batch 2C-D3-A1 public product and variant projection is complete and
+production-installed** through
+`20261106105539_add_public_product_variant_projection.sql`. The production
+ledger contains 34 migrations through `20261106105539`. The installed
+`public.public_storefront_products` view is an allowlisted, security-invoker,
+security-barrier read surface. The hardened
+`public.get_public_product_variant_projection(uuid)` RPC exposes only eligible
+explicit combinations, has MD5 `eddab14949efe1400338ca7ee9688675`, and grants
+execution only to `anon` and `authenticated` among application roles.
+
+Disposable validation covered legacy and generalized option identities,
+explicit-combination filtering, zero-stock behavior, and the rule that variant
+availability never falls back to parent stock. All fixture changes rolled
+back. Production installation preserved the C3 private-table ACL matrix and
+existing financial and business data. The D3-A1 application types and parser
+exist locally but no storefront query uses the new view or RPC yet.
+
+The disposable availability filter measured 35.760 ms with 28,515 shared
+buffer hits, and the synthetic 100-combination projection measured 23.775 ms
+with 22,641 shared hits. These are synthetic measurements rather than
+production performance guarantees. Performance assessment remains required
+before broad storefront rollout.
+
 The remaining controlled stages are:
 
-- **2C-D3 — Pending:** public variant projection, customer selector, and cart
-  integration.
+- **2C-D3-A2 — Pending:** customer option selector and product-card
+  availability integration.
+- **2C-D3-A3 — Pending:** variant cart-line identity and Zustand persistence
+  migration.
+- **2C-D3-A4 — Pending:** fail-closed variant checkout gate and comprehensive
+  regression tests.
 - **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
   and order-history snapshot presentation.
 - **2C-D5 — Pending:** controlled vendor variant activation and publication.
+
+There is no customer application integration, checkout cutover, Paystack
+change, variant activation, or customer variant purchasing in D3-A1. D2 stays
+dormant, both draft-only publication constraints remain validated, and true
+two-session active-variant concurrency remains a D5 release gate.
 
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation

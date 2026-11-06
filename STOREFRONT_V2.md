@@ -730,15 +730,49 @@ remain draft-only under the two publication constraints. True two-session
 active-variant races remain unverified and are a mandatory gate before customer
 variant purchasing is activated.
 
+**Batch 2C-D3-A1 is COMPLETE AND PRODUCTION-INSTALLED.** Migration
+`20261106105539_add_public_product_variant_projection.sql` advanced production
+project `jznuklvrhfivbdsxgiwv` to 34 migrations through `20261106105539`.
+Disposable PostgreSQL validation passed, its publication fixtures rolled back,
+and production installation plus independent read-only verification preserved
+existing financial and business data.
+
+`public.public_storefront_products` is an allowlisted view with
+`security_invoker=true` and `security_barrier=true`. Anonymous and authenticated
+roles have SELECT only. The postgres-owned, stable, `SECURITY DEFINER`
+`public.get_public_product_variant_projection(uuid)` RPC has an empty
+`search_path`, MD5 `eddab14949efe1400338ca7ee9688675`, and grants EXECUTE only
+to `anon` and `authenticated` among application roles. The C3 private-table
+grant matrix remains unchanged.
+
+The projection supports deterministic legacy and generalized option identities
+and returns only explicit eligible combinations. Zero-stock combinations remain
+explicitly represented, but availability requires an in-stock combination and
+never substitutes parent stock for variant stock. The corresponding application
+types and fail-closed parser exist in local source; customer storefront queries
+do not use this contract yet.
+
+Disposable synthetic measurements were 35.760 ms and 28,515 shared hits for
+the availability filter, and 23.775 ms and 22,641 shared hits for the
+100-combination projection. They are not production performance guarantees.
+Performance assessment remains required before broad storefront rollout.
+
 Later controlled stages remain:
 
-- **2C-D3 — Pending:** public variant projection, customer selector, and cart
-  integration.
+- **2C-D3-A2 — Pending:** customer option selector and product-card
+  availability integration.
+- **2C-D3-A3 — Pending:** variant cart-line identity and Zustand persistence
+  migration.
+- **2C-D3-A4 — Pending:** fail-closed variant checkout gate and comprehensive
+  regression tests.
 - **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
   and order-history snapshot presentation.
 - **2C-D5 — Pending:** controlled vendor variant activation and publication.
 
-None of these customer purchase or publication paths is implemented by D2.
+D3-A1 does not integrate the customer application, cut over checkout, modify
+Paystack, activate variants, or enable customer variant purchasing. D2 remains
+dormant and both draft-only publication constraints remain validated. True
+two-session active-variant concurrency remains a D5 release gate.
 
 ### Phase 4 — Customer experience
 
