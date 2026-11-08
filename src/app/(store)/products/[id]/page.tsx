@@ -85,7 +85,10 @@ export default async function ProductDetailPage({
               </p>
             </section>
 
-            <ProductActions product={product} />
+            <ProductActions
+              product={product}
+              variantProjection={detail.variantProjection}
+            />
 
             <div className="grid gap-3 sm:grid-cols-2">
               <GuidanceCard icon={Truck} title="Delivery guidance">
@@ -98,7 +101,9 @@ export default async function ProductDetailPage({
 
             <div className="flex items-center gap-3 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">
               <PackageCheck className="size-5 shrink-0" />
-              Payment is completed through the existing secure checkout flow.
+              {product.variant_mode === "none"
+                ? "Payment is completed through the existing secure checkout flow."
+                : "Variant selection is available for preview; purchasing is not yet enabled."}
             </div>
           </div>
         </div>

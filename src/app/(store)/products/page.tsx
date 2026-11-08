@@ -21,8 +21,8 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const params = parseCatalogueParams(await searchParams)
   const vendors = await getActiveVendors()
   const result = await getCatalogue(params, vendors)
-  if (result.total > 0 && params.page > result.totalPages) {
-    redirect(catalogueHref(params, { page: result.totalPages }))
+  if (params.page !== result.page) {
+    redirect(catalogueHref(params, { page: result.page }))
   }
   const hasFilters = Boolean(params.q || params.category || params.vendor || params.minPrice !== null || params.maxPrice !== null || params.availability !== "all")
 

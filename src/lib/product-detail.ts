@@ -1,14 +1,19 @@
-import { getActiveVendors } from "@/lib/catalogue"
+import {
+  getActiveVendors,
+  PUBLIC_STOREFRONT_PRODUCT_FIELDS,
+} from "@/lib/catalogue"
+import { parsePublicProductVariantProjection } from "@/lib/public-product-variants"
 import {
   categoryMatchesSlug,
   getCategoryDatabaseValues,
   STORE_CATEGORIES,
 } from "@/lib/storefront"
 import { supabase } from "@/lib/supabase"
-import type { CatalogueProduct, Product } from "@/types"
-
-const PRODUCT_FIELDS =
-  "id, vendor_id, name, description, price, stock, category, images, is_active, created_at"
+import type {
+  CatalogueProduct,
+  PublicProductVariantProjection,
+  StorefrontProduct,
+} from "@/types"
 
 export function isProductId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -29,7 +34,7 @@ function logQueryError(
 }
 
 function attachVendors(
-  products: Product[],
+  products: StorefrontProduct[],
   vendorNames: Map<string, string>
 ): CatalogueProduct[] {
   return products.map((product) => {
@@ -45,12 +50,12 @@ export async function getProductDetail(id: string): Promise<{
   current: CatalogueProduct | null
   related: CatalogueProduct[]
   sameVendor: CatalogueProduct[]
+  variantProjection: PublicProductVariantProjection | null
 }> {
   const productResult = await supabase
-    .from("products")
-    .select(PRODUCT_FIELDS)
+    .from("public_storefront_products")
+    .select(PUBLIC_STOREFRONT_PRODUCT_FIELDS)
     .eq("id", id)
-    .eq("is_active", true)
     .maybeSingle()
 
   if (productResult.error) {
@@ -58,17 +63,27 @@ export async function getProductDetail(id: string): Promise<{
     throw new Error(`Unable to load product: ${productResult.error.message}`)
   }
   if (!productResult.data) {
-    return { current: null, related: [], sameVendor: [] }
+    return {
+      current: null,
+      related: [],
+      sameVendor: [],
+      variantProjection: null,
+    }
   }
 
-  const product = productResult.data as Product
+  const product = productResult.data as StorefrontProduct
   const vendors = await getActiveVendors()
   const vendorNames = new Map(vendors.map((vendor) => [vendor.id, vendor.name]))
   const activeVendorIds = vendors.map((vendor) => vendor.id)
   const currentVendorName = vendorNames.get(product.vendor_id)
 
   if (!currentVendorName) {
-    return { current: null, related: [], sameVendor: [] }
+    return {
+      current: null,
+      related: [],
+      sameVendor: [],
+      variantProjection: null,
+    }
   }
 
   let related: CatalogueProduct[] = []
@@ -81,9 +96,8 @@ export async function getProductDetail(id: string): Promise<{
       : [product.category]
 
     const relatedResult = await supabase
-      .from("products")
-      .select(PRODUCT_FIELDS)
-      .eq("is_active", true)
+      .from("public_storefront_products")
+      .select(PUBLIC_STOREFRONT_PRODUCT_FIELDS)
       .or(categoryValues.map((value) => `category.ilike.${value}`).join(","))
       .in("vendor_id", activeVendorIds)
       .neq("id", product.id)
@@ -97,13 +111,15 @@ export async function getProductDetail(id: string): Promise<{
         `Unable to load related products: ${relatedResult.error.message}`
       )
     }
-    related = attachVendors((relatedResult.data ?? []) as Product[], vendorNames)
+    related = attachVendors(
+      (relatedResult.data ?? []) as StorefrontProduct[],
+      vendorNames
+    )
   }
 
   let sameVendorQuery = supabase
-    .from("products")
-    .select(PRODUCT_FIELDS)
-    .eq("is_active", true)
+    .from("public_storefront_products")
+    .select(PUBLIC_STOREFRONT_PRODUCT_FIELDS)
     .eq("vendor_id", product.vendor_id)
     .neq("id", product.id)
     .order("created_at", { ascending: false })
@@ -123,6 +139,26 @@ export async function getProductDetail(id: string): Promise<{
     )
   }
 
+  let variantProjection: PublicProductVariantProjection | null = null
+  if (product.variant_mode !== "none") {
+    const projectionResult = await supabase.rpc(
+      "get_public_product_variant_projection",
+      { p_product_id: product.id }
+    )
+
+    if (projectionResult.error) {
+      logQueryError("variant projection", projectionResult.error)
+    } else {
+      const parsed = parsePublicProductVariantProjection(
+        projectionResult.data,
+        product.id
+      )
+      if (parsed?.variant_mode === product.variant_mode) {
+        variantProjection = parsed
+      }
+    }
+  }
+
   return {
     current: {
       product,
@@ -130,8 +166,9 @@ export async function getProductDetail(id: string): Promise<{
     },
     related,
     sameVendor: attachVendors(
-      (sameVendorResult.data ?? []) as Product[],
+      (sameVendorResult.data ?? []) as StorefrontProduct[],
       vendorNames
     ),
+    variantProjection,
   }
 }

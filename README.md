@@ -410,8 +410,48 @@ Disposable validation covered legacy and generalized option identities,
 explicit-combination filtering, zero-stock behavior, and the rule that variant
 availability never falls back to parent stock. All fixture changes rolled
 back. Production installation preserved the C3 private-table ACL matrix and
-existing financial and business data. The D3-A1 application types and parser
-exist locally but no storefront query uses the new view or RPC yet.
+existing financial and business data.
+
+**Batch 2C-D3-A2 local implementation and source/browser QA are complete; Git
+closeout and production application deployment are pending.** The local
+storefront now uses the D3-A1 public view for the homepage, catalogue and
+search, product detail, vendor storefront, related products, and same-vendor
+recommendations. Ordinary products retain parent-stock availability and their
+existing Add to Cart path. Variant products use `available_stock` and
+`has_in_stock_combination`, never fall back to parent stock, and show Select
+Options on cards. Product detail calls the public projection RPC only for a
+variant-mode product and validates its mode with the strict parser.
+
+The selector supports legacy size, colour, and size-colour modes plus
+generalized one-to-three-axis explicit combinations. It resolves the exact
+selected variant UUID, rejects zero-stock or nonexistent combinations, clears
+dependent values that become invalid, and includes the corrected multi-axis
+switching behavior. Null or malformed projection data fails closed. Variant
+Add to Cart remains disabled and the selector cannot create a parent-only cart
+line.
+
+D3-A2 also includes punctuation-safe catalogue search and bounded pagination
+recovery. Apostrophes remain searchable; PostgREST OR operands and LIKE
+wildcards are escaped as literals. A `PGRST103` response is canonicalized only
+after a count-only HEAD query proves the requested range is outside the exact
+result count. Valid pages retain one data query, search/filter state is
+preserved, and unrelated database failures still throw. Neither correction
+required a database migration.
+
+The final selected validation passed 209 tests, TypeScript, changed-file
+ESLint, the production build, and rendered Chrome QA. Browser coverage included
+the homepage, catalogue, search, filters and sorting, pagination recovery,
+ordinary detail and cart behavior, vendor storefront, eligible
+recommendations, selector keyboard/pointer operation, image delivery, and
+375 px, 768 px, and 1280 px layouts. Positive variant behavior used isolated
+synthetic fixtures because no variant product is currently published. The
+public catalogue had fewer than 24 matching products, so generated multi-page
+links could not be exercised. No live sold-out ordinary product was available,
+separate same-vendor content can be absent when no eligible data exists, and
+screen-reader speech was not directly tested. Local timings are not production
+guarantees. A separate pre-existing full-tree lint error remains parked in
+`src/components/vendor/payout-table.tsx` near line 34, with three existing image
+warnings; D3-A2 changed-file lint passes.
 
 The disposable availability filter measured 35.760 ms with 28,515 shared
 buffer hits, and the synthetic 100-combination projection measured 23.775 ms
@@ -421,8 +461,8 @@ before broad storefront rollout.
 
 The remaining controlled stages are:
 
-- **2C-D3-A2 — Pending:** customer option selector and product-card
-  availability integration.
+- **2C-D3-A2 — Local implementation and source/browser QA complete:** Git
+  closeout and production application deployment remain pending.
 - **2C-D3-A3 — Pending:** variant cart-line identity and Zustand persistence
   migration.
 - **2C-D3-A4 — Pending:** fail-closed variant checkout gate and comprehensive
@@ -431,10 +471,12 @@ The remaining controlled stages are:
   and order-history snapshot presentation.
 - **2C-D5 — Pending:** controlled vendor variant activation and publication.
 
-There is no customer application integration, checkout cutover, Paystack
-change, variant activation, or customer variant purchasing in D3-A1. D2 stays
-dormant, both draft-only publication constraints remain validated, and true
-two-session active-variant concurrency remains a D5 release gate.
+The production application does not yet contain the D3-A2 integration. There
+is no variant cart activation, checkout cutover, Paystack or payment-finalizer
+change, D2 construction cutover, RLS/ACL change, variant activation,
+publication, or customer variant purchasing. D2 stays dormant, both draft-only
+publication constraints remain validated, and true two-session active-variant
+concurrency remains a D5 release gate.
 
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation

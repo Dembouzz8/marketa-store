@@ -4,11 +4,35 @@ import { Minus, Plus } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { ProductVariantSelector } from "@/components/product-variant-selector"
 import { useCartStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import type { Product } from "@/types"
+import type {
+  Product,
+  PublicProductVariantProjection,
+  StorefrontProduct,
+} from "@/types"
 
-export function ProductActions({ product }: { product: Product }) {
+export function ProductActions({
+  product,
+  variantProjection,
+}: {
+  product: StorefrontProduct
+  variantProjection: PublicProductVariantProjection | null
+}) {
+  if (product.variant_mode !== "none") {
+    return (
+      <ProductVariantSelector
+        key={product.id}
+        projection={variantProjection}
+      />
+    )
+  }
+
+  return <OrdinaryProductActions product={product} />
+}
+
+function OrdinaryProductActions({ product }: { product: Product }) {
   const addItem = useCartStore((state) => state.addItem)
   const [quantity, setQuantity] = useState(1)
   const isOutOfStock = product.stock <= 0

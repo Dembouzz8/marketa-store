@@ -12,10 +12,13 @@ import {
 
 import { Hero } from "@/components/hero"
 import { ProductCard } from "@/components/product-card"
-import { getActiveVendors } from "@/lib/catalogue"
+import {
+  getActiveVendors,
+  PUBLIC_STOREFRONT_PRODUCT_FIELDS,
+} from "@/lib/catalogue"
 import { STORE_CATEGORIES } from "@/lib/storefront"
 import { supabase } from "@/lib/supabase"
-import type { Product } from "@/types"
+import type { StorefrontProduct } from "@/types"
 
 export const dynamic = "force-dynamic"
 
@@ -76,7 +79,7 @@ const shoppingSteps = [
 ]
 
 async function getHomepageData(): Promise<{
-  products: Product[]
+  products: StorefrontProduct[]
   vendors: FeaturedVendor[]
 }> {
   const activeVendors = await getActiveVendors()
@@ -87,11 +90,8 @@ async function getHomepageData(): Promise<{
 
   const activeVendorIds = activeVendors.map((vendor) => vendor.id)
   const productsResult = await supabase
-    .from("products")
-    .select(
-      "id, vendor_id, name, description, price, stock, category, images, is_active, created_at"
-    )
-    .eq("is_active", true)
+    .from("public_storefront_products")
+    .select(PUBLIC_STOREFRONT_PRODUCT_FIELDS)
     .in("vendor_id", activeVendorIds)
     .order("created_at", { ascending: false })
     .order("id", { ascending: true })
@@ -108,7 +108,7 @@ async function getHomepageData(): Promise<{
   }
 
   return {
-    products: (productsResult.data ?? []) as Product[],
+    products: (productsResult.data ?? []) as StorefrontProduct[],
     vendors: activeVendors.slice(0, 4) as FeaturedVendor[],
   }
 }

@@ -5,10 +5,10 @@ import { motion } from "framer-motion"
 
 import { CategoryFilter } from "@/components/category-filter"
 import { ProductCard } from "@/components/product-card"
-import type { Product } from "@/types"
+import type { StorefrontProduct } from "@/types"
 
 interface ProductsSectionProps {
-  products: Product[]
+  products: StorefrontProduct[]
   categories: string[]
 }
 

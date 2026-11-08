@@ -52,6 +52,12 @@ export interface PublicProductVariantProjection {
   combinations: PublicProductVariantCombination[]
 }
 
+export interface StorefrontProduct extends Product {
+  variant_mode: ProductVariantMode
+  available_stock: number
+  has_in_stock_combination: boolean
+}
+
 export interface VendorProduct extends Product {
   variant_mode: ProductVariantMode
   category_code: string | null
@@ -172,7 +178,7 @@ export interface PublicVendor {
 export type CatalogueVendor = Pick<PublicVendor, "id" | "name">
 
 export interface CatalogueProduct {
-  product: Product
+  product: StorefrontProduct
   vendor: CatalogueVendor
 }
 

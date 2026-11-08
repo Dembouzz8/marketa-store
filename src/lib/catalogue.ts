@@ -3,14 +3,18 @@ import { supabase } from "@/lib/supabase"
 import type {
   CatalogueProduct,
   CatalogueVendor,
-  Product,
   PublicVendor,
+  StorefrontProduct,
 } from "@/types"
 
 export const CATALOGUE_PAGE_SIZE = 24
+const MAX_CATALOGUE_PAGE = Math.floor(Number.MAX_SAFE_INTEGER / CATALOGUE_PAGE_SIZE)
 
 const PUBLIC_VENDOR_FIELDS =
   "id, name, slug, description, main_category, location, shipping_info, return_info, is_verified"
+
+export const PUBLIC_STOREFRONT_PRODUCT_FIELDS =
+  "id, vendor_id, name, description, price, stock, category, images, is_active, created_at, variant_mode, available_stock, has_in_stock_combination"
 
 export const AVAILABILITY_VALUES = ["all", "in-stock", "out-of-stock"] as const
 export const SORT_VALUES = ["newest", "price-asc", "price-desc"] as const
@@ -50,13 +54,51 @@ function uuid(value: string): string {
   return isUuid(normalized) ? normalized : ""
 }
 
+export function parseCataloguePage(value: string): number {
+  const normalized = value.trim()
+  if (!/^\d+$/u.test(normalized)) return 1
+
+  const parsed = Number(normalized)
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= MAX_CATALOGUE_PAGE
+    ? parsed
+    : 1
+}
+
 export function normalizeSearchTerm(value: string): string {
   return value
     .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}\s&-]/gu, " ")
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 100)
+}
+
+function escapePostgresLikeLiteral(value: string): string {
+  return value.replace(/[\\%_*]/g, "\\$&")
+}
+
+function quotePostgrestFilterValue(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+}
+
+export function buildCatalogueSearchFilter(
+  searchTerm: string,
+  matchingVendorIds: string[] = []
+): string {
+  // The first escape layer makes customer punctuation literal to PostgreSQL
+  // ILIKE. The second protects the quoted operand in PostgREST's OR grammar.
+  const pattern = quotePostgrestFilterValue(`%${escapePostgresLikeLiteral(searchTerm)}%`)
+  const filters = [
+    `name.ilike.${pattern}`,
+    `description.ilike.${pattern}`,
+    `category.ilike.${pattern}`,
+  ]
+
+  if (matchingVendorIds.length > 0) {
+    filters.push(`vendor_id.in.(${matchingVendorIds.join(",")})`)
+  }
+
+  return filters.join(",")
 }
 
 export function parseCatalogueParams(raw: RawCatalogueParams): CatalogueParams {
@@ -85,7 +127,7 @@ export function parseCatalogueParams(raw: RawCatalogueParams): CatalogueParams {
     sort: SORT_VALUES.includes(sortValue as CatalogueSort)
       ? (sortValue as CatalogueSort)
       : "newest",
-    page: Math.max(1, Number.parseInt(first(raw.page), 10) || 1),
+    page: parseCataloguePage(first(raw.page)),
   }
 }
 
@@ -151,14 +193,11 @@ export async function getActiveVendorById(
 
 export async function getActiveProductsByVendorId(
   vendorId: string
-): Promise<Product[]> {
+): Promise<StorefrontProduct[]> {
   const { data, error } = await supabase
-    .from("products")
-    .select(
-      "id, vendor_id, name, description, price, stock, category, images, is_active, created_at"
-    )
+    .from("public_storefront_products")
+    .select(PUBLIC_STOREFRONT_PRODUCT_FIELDS)
     .eq("vendor_id", vendorId)
-    .eq("is_active", true)
     .order("created_at", { ascending: false })
     .order("id", { ascending: true })
 
@@ -172,7 +211,7 @@ export async function getActiveProductsByVendorId(
     throw new Error("Unable to load products for this vendor storefront.")
   }
 
-  return (data ?? []) as Product[]
+  return (data ?? []) as StorefrontProduct[]
 }
 
 export async function getCatalogue(
@@ -192,35 +231,33 @@ export async function getCatalogue(
         .map((vendor) => vendor.id)
     : []
 
-  let query = supabase
-    .from("products")
-    .select(
-      "id, vendor_id, name, description, price, stock, category, images, is_active, created_at",
-      { count: "exact" }
-    )
-    .eq("is_active", true)
-    .in("vendor_id", activeVendorIds)
-
-  if (params.q) {
-    const pattern = `%${params.q}%`
-    const filters = [
-      `name.ilike.${pattern}`,
-      `description.ilike.${pattern}`,
-      `category.ilike.${pattern}`,
-    ]
-    if (matchingVendorIds.length > 0) filters.push(`vendor_id.in.(${matchingVendorIds.join(",")})`)
-    query = query.or(filters.join(","))
-  }
-
   const categoryValues = getCategoryDatabaseValues(params.category)
-  if (categoryValues.length > 0) {
-    query = query.or(categoryValues.map((value) => `category.ilike.${value}`).join(","))
+  const createFilteredCatalogueQuery = (head: boolean) => {
+    const table = supabase.from("public_storefront_products")
+    let filteredQuery = (
+      head
+        ? table.select("id", { count: "exact", head: true })
+        : table.select(PUBLIC_STOREFRONT_PRODUCT_FIELDS, { count: "exact" })
+    ).in("vendor_id", activeVendorIds)
+
+    if (params.q) {
+      filteredQuery = filteredQuery.or(buildCatalogueSearchFilter(params.q, matchingVendorIds))
+    }
+    if (categoryValues.length > 0) {
+      filteredQuery = filteredQuery.or(
+        categoryValues.map((value) => `category.ilike.${value}`).join(",")
+      )
+    }
+    if (params.vendor) filteredQuery = filteredQuery.eq("vendor_id", params.vendor)
+    if (params.minPrice !== null) filteredQuery = filteredQuery.gte("price", params.minPrice)
+    if (params.maxPrice !== null) filteredQuery = filteredQuery.lte("price", params.maxPrice)
+    if (params.availability === "in-stock") filteredQuery = filteredQuery.gt("available_stock", 0)
+    if (params.availability === "out-of-stock") filteredQuery = filteredQuery.eq("available_stock", 0)
+
+    return filteredQuery
   }
-  if (params.vendor) query = query.eq("vendor_id", params.vendor)
-  if (params.minPrice !== null) query = query.gte("price", params.minPrice)
-  if (params.maxPrice !== null) query = query.lte("price", params.maxPrice)
-  if (params.availability === "in-stock") query = query.gt("stock", 0)
-  if (params.availability === "out-of-stock") query = query.eq("stock", 0)
+
+  let query = createFilteredCatalogueQuery(false)
 
   if (params.sort === "price-asc") query = query.order("price", { ascending: true })
   else if (params.sort === "price-desc") query = query.order("price", { ascending: false })
@@ -228,10 +265,25 @@ export async function getCatalogue(
   query = query.order("id", { ascending: true })
 
   const requestedFrom = (params.page - 1) * CATALOGUE_PAGE_SIZE
-  const { data, error, count } = await query.range(
+  const rangeResult = await query.range(
     requestedFrom,
     requestedFrom + CATALOGUE_PAGE_SIZE - 1
   )
+  let { data, error, count } = rangeResult
+
+  if (error?.code === "PGRST103") {
+    const countResult = await createFilteredCatalogueQuery(true)
+    if (
+      !countResult.error &&
+      typeof countResult.count === "number" &&
+      requestedFrom >= countResult.count
+    ) {
+      data = []
+      error = null
+      count = countResult.count
+    }
+  }
+
   if (error) {
     console.error("[catalogue products] query failed", {
       code: error.code,
@@ -244,7 +296,8 @@ export async function getCatalogue(
 
   const total = count ?? 0
   const totalPages = Math.max(1, Math.ceil(total / CATALOGUE_PAGE_SIZE))
-  const rows = (data ?? []) as Product[]
+  const page = Math.min(params.page, totalPages)
+  const rows = (data ?? []) as StorefrontProduct[]
   return {
     products: rows.map((product) => {
       const vendorName = vendorNames.get(product.vendor_id)
@@ -257,7 +310,7 @@ export async function getCatalogue(
       }
     }),
     total,
-    page: params.page,
+    page,
     totalPages,
   }
 }

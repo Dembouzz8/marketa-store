@@ -748,9 +748,37 @@ grant matrix remains unchanged.
 The projection supports deterministic legacy and generalized option identities
 and returns only explicit eligible combinations. Zero-stock combinations remain
 explicitly represented, but availability requires an in-stock combination and
-never substitutes parent stock for variant stock. The corresponding application
-types and fail-closed parser exist in local source; customer storefront queries
-do not use this contract yet.
+never substitutes parent stock for variant stock.
+
+**Batch 2C-D3-A2 local implementation and source/browser QA are complete. Git
+closeout and production application deployment are pending.** The local customer
+integration now covers the homepage, catalogue and search results, product detail,
+related products, and same-vendor products. Ordinary products continue to use
+ordinary stock. Variant cards consume the public projection's availability fields
+without falling back to parent stock, show **Select Options**, and avoid loading the
+exact projection RPC until a customer opens a variant product detail page.
+
+The product-detail selector supports legacy size, colour, and size-colour products
+plus generalized products with one to three axes. It exposes only explicit in-stock
+combinations, resolves the exact variant UUID, clears dependent values that become
+invalid after an earlier-axis change, and fails closed on malformed or unavailable
+projection data. The current Add to Cart path remains disabled for variant products;
+no variant cart line or checkout payload is created.
+
+D3-A2 also corrects two pre-existing catalogue issues. Search normalization now
+preserves visible punctuation such as the apostrophe in `Men's`, bounds input to 100
+characters, removes control characters, and quotes and escapes literal PostgREST
+`ilike` operands. Pagination performs a bounded count-first query and returns a
+handled empty result for a stale or out-of-range page instead of surfacing
+PostgREST `PGRST103`; catalogue links reset pagination when filters or search change.
+
+Validation after the final corrections comprised 209 focused and regression tests,
+TypeScript, changed-file ESLint, a production build, and rendered Chrome QA. Browser
+coverage used ordinary live catalogue data and a controlled local projection fixture
+for selector states; it did not exercise a real production variant publication,
+variant cart line, checkout request, or payment. Full-tree ESLint still has the
+pre-existing payout-table error and three existing image warnings; changed-file
+ESLint passes.
 
 Disposable synthetic measurements were 35.760 ms and 28,515 shared hits for
 the availability filter, and 23.775 ms and 22,641 shared hits for the
@@ -759,8 +787,9 @@ Performance assessment remains required before broad storefront rollout.
 
 Later controlled stages remain:
 
-- **2C-D3-A2 — Pending:** customer option selector and product-card
-  availability integration.
+- **2C-D3-A2 — Local implementation and QA complete; Git closeout and production
+  application deployment pending:** customer option selector, storefront
+  availability, punctuation-safe search, and bounded pagination.
 - **2C-D3-A3 — Pending:** variant cart-line identity and Zustand persistence
   migration.
 - **2C-D3-A4 — Pending:** fail-closed variant checkout gate and comprehensive
@@ -769,10 +798,12 @@ Later controlled stages remain:
   and order-history snapshot presentation.
 - **2C-D5 — Pending:** controlled vendor variant activation and publication.
 
-D3-A1 does not integrate the customer application, cut over checkout, modify
-Paystack, activate variants, or enable customer variant purchasing. D2 remains
-dormant and both draft-only publication constraints remain validated. True
-two-session active-variant concurrency remains a D5 release gate.
+The production application does not yet contain the local D3-A2 integration.
+D3-A2 does not add variant cart identity, cut over checkout, modify Paystack or the
+paid-order finalizer, activate or publish variants, alter D2/RLS/ACL authority, or
+enable customer variant purchasing. D2 remains dormant and both draft-only
+publication constraints remain validated. True two-session active-variant
+concurrency remains a D5 release gate.
 
 ### Phase 4 — Customer experience
 
