@@ -788,15 +788,17 @@ the availability filter, and 23.775 ms and 22,641 shared hits for the
 100-combination projection. They are not production performance guarantees.
 Performance assessment remains required before broad storefront rollout.
 
-**Batch 2C-D3-A3 technical implementation is complete and locally accepted;
-it is not committed, pushed, or deployed.** Its pure cart contract models
-ordinary and variant lines with the discriminated `CartItemV1` type and assigns
-every line an exact deterministic `cartLineId`. Ordinary identity is based on
-the product UUID; variant identity includes both the product and exact variant
-UUID. No name-based merge or parent-only variant fallback is permitted.
-Ordinary Add to Cart remains active. Variant cart lines are structurally
-supported for the staged architecture, while the customer selector and all
-customer variant purchasing remain disabled.
+**Batch 2C-D3-A3 is released to production.** Commit
+`1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc` is running in READY deployment
+`dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4` at
+`https://marketa-store.vercel.app`. Its pure cart contract models ordinary and
+variant lines with the discriminated `CartItemV1` type and assigns every line
+an exact deterministic `cartLineId`. Ordinary identity is based on the product
+UUID; variant identity includes both the product and exact variant UUID. No
+name-based merge or parent-only variant fallback is permitted. Ordinary Add to
+Cart remains active. Variant cart lines are structurally supported for the
+staged architecture, while the customer selector and all customer variant
+purchasing remain disabled.
 
 The existing `marketa-cart` record uses persistence version 1. Supported
 version-0 ordinary carts migrate safely through the accepted legacy normalizer,
@@ -835,28 +837,45 @@ because no public variant fixture exists under the draft-only publication
 policy. Dedicated selector source tests passed and preserve the disabled
 purchasing boundary; the rendered case remains explicitly untested.
 
-Controlled-stage status:
+Post-release production smoke testing passed ordinary Add to Cart, navbar cart
+counts, quantity increase and decrease, targeted removal, refresh persistence,
+and cart open/close without a persistence write. A version-1 ordinary line
+survived refresh at quantity two, the cart initialized closed, and opening and
+closing it preserved the exact stored bytes. Ordinary checkout entry remained
+enabled and redirected the signed-out browser to login while preserving the
+cart. Authenticated checkout was not exercised and no payment was initiated.
+Because production has no published variant fixture, the rendered selector
+case remained unexecuted; variant purchasing remains disabled.
+
+The accepted pre-launch release policy is forward-fix-first. The owner accepted
+the limited version-1 rollback risk and cancelled the proposed compatibility
+bridge. The original D3-A2 application is not a safe rollback target for
+upgraded version-1 carts because it can treat them as empty and overwrite their
+persisted contents. A production defect must be corrected forward while
+preserving version-1 cart data.
+
+Release status:
 
 - **2C-D3-A2 — Complete:** committed, deployed READY, and production
   smoke-tested with ordinary commerce preserved, the customer option selector
   integrated, and search and pagination hardened.
-- **2C-D3-A3 — Complete and locally accepted:** source and independent QA are
-  complete. Commit, push, deployment, and production release approval remain
-  outstanding; controlled release review is next.
-- **2C-D3-A4 — Pending:** checkout separation and its separately authorized
-  regression scope are not implemented.
+- **2C-D3-A3 — Complete and released:** commit
+  `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`, READY deployment
+  `dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4`, and non-payment production smoke testing
+  are complete.
+- **2C-D3-A4 — Next:** checkout separation and its separately authorized
+  regression scope are the next development milestone and are not implemented.
 - **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
   and order-history snapshot presentation.
 - **2C-D5 — Pending:** controlled vendor variant activation and publication.
 
-The production application remains at the accepted D3-A2 integration; D3-A3 is
-local only. No production variant cart or purchasing path is active, checkout
-has not been cut over, and Paystack, the paid-order finalizer, D2/RLS/ACL
-authority, activation, and publication remain unchanged. Production currently
-has no published variant parents. D2 remains dormant and both draft-only
-publication constraints remain validated. True two-session active-variant
-concurrency remains a D5 release gate. Local D3-A3 acceptance does not authorize
-production release.
+The production application includes the accepted D3-A3 cart identity and
+persistence release. No production variant cart or purchasing path is active,
+checkout has not been cut over, and Paystack, the paid-order finalizer,
+D2/RLS/ACL authority, activation, and publication remain unchanged. Production
+currently has no published variant parents. D2 remains dormant and both
+draft-only publication constraints remain validated. True two-session
+active-variant concurrency remains a D5 release gate.
 
 ### Phase 4 — Customer experience
 

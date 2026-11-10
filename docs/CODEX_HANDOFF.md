@@ -7,13 +7,12 @@ repository and applied migrations take precedence over this handoff.
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `f5fc62be2265059b839068cbf21d816e1ec3df8d`.
+- HEAD: `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`.
 - Local `origin/main`: the same commit.
-- Before this documentation closeout, the working tree contained exactly the
-  accepted 15 D3-A3 application/test paths plus the three existing D3-A2
-  documentation changes. This documentation-only task updates only
-  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; accepted D3-A3
-  source and test hashes remain unchanged. Nothing is staged.
+- Before this post-release documentation update, the working tree was clean at
+  the D3-A3 release commit. This documentation-only task updates only
+  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; application and
+  test sources remain unchanged. Nothing is staged.
 - Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, 2C-D2, and
   2C-D3-A1 are applied to the linked production database through
   `20261106105539_add_public_product_variant_projection.sql`. The production
@@ -209,14 +208,15 @@ availability filter and 23.775 ms with 22,641 shared hits for the
 100-combination projection. These figures are not production guarantees.
 Performance assessment is required before broad storefront rollout.
 
-**Batch 2C-D3-A3 technical implementation is complete and locally accepted;
-commit, push, production deployment, and production release approval have not
-occurred.** The accepted `CartItemV1` contract distinguishes ordinary and
-variant lines and gives every line an exact deterministic `cartLineId`.
-Ordinary identity uses the product UUID; variant identity uses the product and
-exact variant UUID. Ordinary Add to Cart remains functional. Variant lines are
-structurally supported, but the selector cannot add them and customer variant
-purchasing remains disabled.
+**Batch 2C-D3-A3 is released to production.** Commit
+`1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc` is running in READY deployment
+`dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4` at
+`https://marketa-store.vercel.app`. The released `CartItemV1` contract
+distinguishes ordinary and variant lines and gives every line an exact
+deterministic `cartLineId`. Ordinary identity uses the product UUID; variant
+identity uses the product and exact variant UUID. Ordinary Add to Cart remains
+functional. Variant lines are structurally supported, but the selector cannot
+add them and customer variant purchasing remains disabled.
 
 The existing `marketa-cart` persistence record is version 1. Supported
 version-0 ordinary carts migrate without inferring variant identity.
@@ -252,11 +252,29 @@ browser QA was not executed because the public catalogue has no published
 variant fixture. Dedicated selector source tests passed and purchasing remains
 disabled; the rendered case is not recorded as passed.
 
-The next operational step is a controlled D3-A3 release review. D3-A4 checkout
-separation, D4 checkout Edge Function cutover and order-history snapshot
-presentation, and D5 controlled activation/publication remain pending. True
-two-session active-variant concurrency remains a D5 gate. Local D3-A3 technical
-acceptance does not authorize deployment or production variant purchasing.
+Post-release production smoke testing passed ordinary Add to Cart, navbar cart
+counts, quantity increase and decrease, targeted item removal, refresh
+persistence, and zero-write cart open/close behavior. The version-1 ordinary
+line survived refresh at quantity two, the navbar count remained two, and the
+cart initialized closed. Open and close preserved the exact stored bytes.
+Ordinary checkout entry remained enabled and redirected the signed-out browser
+to the login flow while preserving the cart. Authenticated checkout was not
+exercised and no payment was initiated. The production catalogue had no
+published variant fixture, so rendered variant-selector browser QA remained
+unexecuted; variant purchasing remains disabled.
+
+The accepted pre-launch release policy is forward-fix-first. The owner accepted
+the limited version-1 cart rollback risk and cancelled the proposed
+compatibility bridge. Rolling back to the original D3-A2 build is unsafe for
+upgraded version-1 carts because that build can read them as empty and overwrite
+their persisted contents. Preserve version-1 cart data and issue a forward fix
+if a production defect is found.
+
+D3-A4 checkout separation is the next development milestone and has not
+started. D4 checkout Edge Function cutover and order-history snapshot
+presentation and D5 controlled activation/publication remain pending. True
+two-session active-variant concurrency remains a D5 gate. The D3-A3 release
+does not authorize production variant purchasing.
 
 ## Vendor provisioning status
 
@@ -733,13 +751,16 @@ Completed:
   storefront availability integration, punctuation-safe search, and bounded
   out-of-range pagination. Commit, READY deployment, and nine owner production
   smoke checks are complete.
+- Batch 2C-D3-A3 production application release for exact cart-line identity,
+  version-1 Zustand persistence, storage-health protection, and zero-write cart
+  visibility. Commit `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`, READY
+  deployment `dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4`, and non-payment production
+  smoke testing are complete.
 
-Locally complete; controlled release review next:
+Next development milestone:
 
-- Batch 2C-D3-A3 variant cart-line identity and backward-compatible Zustand
-  persistence migration. Technical implementation and independent acceptance
-  are complete. Commit, push, production deployment, and production release
-  approval have not been performed.
+- Batch 2C-D3-A4 checkout separation and its separately authorized regression
+  scope. Implementation has not started.
 
 Paused:
 
@@ -795,22 +816,23 @@ Deferred validation:
   installed but dormant because the current checkout Edge Function does not
   call it.
 - D3-A2 integrates the installed D3-A1 read contracts into production customer
-  storefront queries. D3-A3 cart identity and persistence are implemented and
-  locally accepted but are not committed, pushed, or deployed. D3-A4 checkout
-  separation, D4 cutover, D5 publication, and variant-specific purchasing
-  remain unavailable. Production currently has no published variant parents.
-  True two-session active-variant races remain a D5 publication-release gate.
+  storefront queries. D3-A3 cart identity and persistence are released to
+  production under the forward-fix-first policy; the original D3-A2 build is
+  unsafe for upgraded version-1 carts and must not be used as a rollback target.
+  D3-A4 checkout separation is next. D4 cutover, D5 publication, and
+  variant-specific purchasing remain unavailable. Production currently has no
+  published variant parents. True two-session active-variant races remain a D5
+  publication-release gate.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
 state through deployed Universal Product Variants Batches 2C-B1, 2C-B2,
-2C-B3, 2C-C2, 2C-C3, 2C-D2, 2C-D3-A1, and the D3-A2 production application
-release, with Batch 2C-C1 architecture reconciliation complete. D2 remains
-dormant. D3-A3 cart identity and persistence are complete and locally accepted
-but not committed, pushed, or deployed. D3-A4 checkout separation, D4 cutover,
-D5 publication, and customer variant purchasing remain pending. Real
-paid-order delivery remains paused before provider enablement. No
+2C-B3, 2C-C2, 2C-C3, 2C-D2, 2C-D3-A1, D3-A2, and the D3-A3 production
+application release, with Batch 2C-C1 architecture reconciliation complete. D2
+remains dormant. D3-A4 checkout separation is the next development milestone;
+D4 cutover, D5 publication, and customer variant purchasing remain pending.
+Real paid-order delivery remains paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.
