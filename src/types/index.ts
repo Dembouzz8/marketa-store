@@ -182,10 +182,48 @@ export interface CatalogueProduct {
   vendor: CatalogueVendor
 }
 
-export interface CartItem {
-  product: Product
-  quantity: number
+/** Display-only product data persisted with a version-1 cart line. */
+export interface CartProductSnapshot {
+  id: string
+  name: string
+  price: number
+  images: string[]
 }
+
+/** Display-only option data derived from a public variant projection. */
+export interface SelectedOptionSnapshot {
+  axis_id: string
+  value_id: string
+  axis_label: string
+  value_label: string
+}
+
+export interface OrdinaryCartItem {
+  kind: "ordinary"
+  cartLineId: string
+  product: CartProductSnapshot
+  quantity: number
+  stock_snapshot: number
+}
+
+export interface VariantCartItem {
+  kind: "variant"
+  cartLineId: string
+  product: CartProductSnapshot
+  quantity: number
+  variant: {
+    product_id: string
+    variant_id: string
+    variant_mode: PublicProductVariantMode
+    stock_snapshot: number
+    selected_options: SelectedOptionSnapshot[]
+  }
+}
+
+/** Persisted and active version-1 cart contract. */
+export type CartItemV1 = OrdinaryCartItem | VariantCartItem
+
+export type CartItem = CartItemV1
 
 export interface CheckoutFormData {
   shipping_address: {

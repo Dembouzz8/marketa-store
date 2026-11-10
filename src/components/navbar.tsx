@@ -25,7 +25,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
-import { useCartStore } from "@/lib/store"
+import {
+  getCartHydrationSnapshot,
+  getServerCartHydrationSnapshot,
+  subscribeToCartHydration,
+  useCartVisibilityStore,
+  useCartStore,
+} from "@/lib/store"
 
 const navLinks = [
   { href: "/", label: "Home" },
@@ -34,24 +40,6 @@ const navLinks = [
   { href: "/vendors", label: "Vendors" },
   { href: "/about", label: "About" },
 ]
-
-function subscribeToCartHydration(onStoreChange: () => void) {
-  const unsubscribeHydrate = useCartStore.persist.onHydrate(onStoreChange)
-  const unsubscribeFinish = useCartStore.persist.onFinishHydration(onStoreChange)
-
-  return () => {
-    unsubscribeHydrate()
-    unsubscribeFinish()
-  }
-}
-
-function getCartHydrationSnapshot() {
-  return useCartStore.persist.hasHydrated()
-}
-
-function getServerCartHydrationSnapshot() {
-  return false
-}
 
 export function Navbar() {
   const pathname = usePathname()
@@ -62,7 +50,7 @@ export function Navbar() {
   const [searchTerm, setSearchTerm] = useState("")
   const searchInputRef = useRef<HTMLInputElement>(null)
   const totalItems = useCartStore((state) => state.totalItems())
-  const setCartOpen = useCartStore((state) => state.setCartOpen)
+  const setCartOpen = useCartVisibilityStore((state) => state.setCartOpen)
   const hasHydratedCart = useSyncExternalStore(
     subscribeToCartHydration,
     getCartHydrationSnapshot,

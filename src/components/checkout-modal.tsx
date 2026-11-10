@@ -1,7 +1,13 @@
 "use client"
 
 import { Check, Loader2, MapPin } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -26,13 +32,25 @@ import {
 } from "@/lib/payment-recovery"
 import { NIGERIAN_STATES } from "@/lib/nigerian-states"
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
-import { useCartStore } from "@/lib/store"
+import {
+  calculateCartTotal,
+  cartCheckoutBlockMessage,
+  evaluateOrdinaryCartCheckout,
+  getCartHydrationSnapshot,
+  getCartPersistenceSnapshot,
+  getServerCartHydrationSnapshot,
+  getServerCartPersistenceSnapshot,
+  subscribeToCartHydration,
+  subscribeToCartPersistence,
+  useCartStore,
+} from "@/lib/store"
 import { cn, formatNaira } from "@/lib/utils"
 import type {
   CheckoutErrorResponse,
   CheckoutFormData,
   CheckoutPayload,
   CheckoutSuccessResponse,
+  OrdinaryCartItem,
 } from "@/types"
 
 interface CheckoutModalProps {
@@ -50,9 +68,6 @@ type SavedAddress = {
   state: string
   is_default: boolean
 }
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 class CheckoutUiError extends Error {
   constructor(
@@ -204,7 +219,22 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const items = useCartStore((state) => state.items)
-  const totalPrice = useCartStore((state) => state.totalPrice())
+  const cartTotal = calculateCartTotal(items)
+  const hasHydratedCart = useSyncExternalStore(
+    subscribeToCartHydration,
+    getCartHydrationSnapshot,
+    getServerCartHydrationSnapshot
+  )
+  const persistenceHealth = useSyncExternalStore(
+    subscribeToCartPersistence,
+    getCartPersistenceSnapshot,
+    getServerCartPersistenceSnapshot
+  )
+  const checkoutEvaluation = evaluateOrdinaryCartCheckout(
+    items,
+    hasHydratedCart,
+    persistenceHealth.status
+  )
 
   useEffect(() => {
     if (!open) return
@@ -340,23 +370,6 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
       return
     }
 
-    const itemIds = items.map((item) => item.product.id.toLowerCase())
-    if (
-      items.length < 1 ||
-      items.length > 50 ||
-      new Set(itemIds).size !== itemIds.length ||
-      items.some(
-        (item) =>
-          !UUID_PATTERN.test(item.product.id) ||
-          !Number.isInteger(item.quantity) ||
-          item.quantity < 1 ||
-          item.quantity > 99
-      )
-    ) {
-      setError("Review the products and quantities in your cart.")
-      return
-    }
-
     setIsLoading(true)
     setError(null)
 
@@ -386,11 +399,38 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         return
       }
 
-      const cartFingerprint = createCartFingerprint(items)
+      const currentItems = useCartStore.getState().items
+      const currentEvaluation = evaluateOrdinaryCartCheckout(
+        currentItems,
+        useCartStore.persist.hasHydrated(),
+        getCartPersistenceSnapshot().status
+      )
+      if (!currentEvaluation.eligible) {
+        throw new CheckoutUiError(
+          cartCheckoutBlockMessage(currentEvaluation.reason)
+        )
+      }
+
+      if (
+        !currentItems.every(
+          (item): item is OrdinaryCartItem => item.kind === "ordinary"
+        )
+      ) {
+        throw new CheckoutUiError(
+          "Products with selected options cannot be purchased yet."
+        )
+      }
+
+      const cartFingerprint = createCartFingerprint(currentItems)
+      if (cartFingerprint === null) {
+        throw new CheckoutUiError(
+          "Review the products and quantities in your cart."
+        )
+      }
       const checkoutAttempt = obtainCheckoutAttempt(cartFingerprint)
       const payload: CheckoutPayload = {
         checkout_attempt_id: checkoutAttempt.checkout_attempt_id,
-        items: items.map((item) => ({
+        items: currentItems.map((item) => ({
           product_id: item.product.id,
           quantity: item.quantity,
         })),
@@ -739,7 +779,7 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
                 <div className="mt-3 max-h-40 space-y-3 overflow-y-auto">
                   {items.map((item) => (
                     <div
-                      key={item.product.id}
+                      key={item.cartLineId}
                       className="flex items-center justify-between gap-4 text-sm"
                     >
                       <div>
@@ -747,6 +787,16 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
                           {item.product.name}
                         </p>
                         <p className="text-zinc-500">Qty {item.quantity}</p>
+                        {item.kind === "variant" && (
+                          <p className="text-xs text-zinc-500">
+                            {item.variant.selected_options
+                              .map(
+                                (option) =>
+                                  `${option.axis_label}: ${option.value_label}`
+                              )
+                              .join(" · ")}
+                          </p>
+                        )}
                       </div>
                       <p className="font-semibold text-zinc-900">
                         {formatNaira(item.product.price * item.quantity)}
@@ -776,7 +826,9 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-zinc-500">Total</span>
                 <span className="text-3xl font-bold text-amber-600">
-                  {formatNaira(totalPrice)}
+                  {cartTotal.valid
+                    ? formatNaira(cartTotal.total)
+                    : "Unavailable"}
                 </span>
               </div>
               <div className="rounded-full bg-emerald-50 px-4 py-2 text-center text-sm font-medium text-emerald-600">
@@ -785,11 +837,15 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
               <Button
                 type="button"
                 onClick={handlePayment}
-                disabled={isLoading || items.length === 0}
+                disabled={isLoading || !checkoutEvaluation.eligible}
                 className="h-auto w-full rounded-xl bg-amber-500 py-4 text-lg font-bold text-zinc-900 hover:bg-amber-400"
               >
                 {isLoading && <Loader2 className="mr-2 size-5 animate-spin" />}
-                Pay {formatNaira(totalPrice)} Now
+                Pay{" "}
+                {cartTotal.valid
+                  ? formatNaira(cartTotal.total)
+                  : "Unavailable"}{" "}
+                Now
               </Button>
               <Button
                 type="button"

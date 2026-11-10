@@ -1,4 +1,4 @@
-import type { CartItem } from "@/types"
+import type { CartItemV1 } from "@/types"
 
 export const PENDING_CHECKOUT_STORAGE_KEY = "marketa-pending-checkout"
 export const CHECKOUT_ATTEMPT_STORAGE_KEY = "marketa-checkout-attempt"
@@ -43,15 +43,41 @@ export function isPaymentReference(value: string): boolean {
 }
 
 export function createCartFingerprint(
-  items: Array<Pick<CartItem, "product" | "quantity">>
-): string {
+  items: readonly CartItemV1[]
+): string | null {
+  const productIds = new Set<string>()
+  const normalized: { product_id: string; quantity: number }[] = []
+
+  for (const item of items) {
+    if (
+      item.kind !== "ordinary" ||
+      !UUID_PATTERN.test(item.product.id) ||
+      !Number.isSafeInteger(item.quantity) ||
+      item.quantity < 1 ||
+      item.quantity > 99
+    ) {
+      return null
+    }
+
+    const productId = item.product.id.toLowerCase()
+    if (productIds.has(productId)) return null
+    productIds.add(productId)
+    normalized.push({ product_id: productId, quantity: item.quantity })
+  }
+
   return JSON.stringify(
-    items
-      .map((item) => ({
-        product_id: item.product.id,
-        quantity: item.quantity,
-      }))
+    normalized
       .sort((left, right) => left.product_id.localeCompare(right.product_id))
+  )
+}
+
+export function pendingCheckoutMatchesCart(
+  pendingCheckout: PendingCheckoutSnapshot,
+  cartFingerprint: string | null
+): boolean {
+  return (
+    cartFingerprint !== null &&
+    pendingCheckout.cart_fingerprint === cartFingerprint
   )
 }
 

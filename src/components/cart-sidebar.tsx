@@ -1,7 +1,7 @@
 "use client"
 
 import { Loader2, Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, useSyncExternalStore } from "react"
 
 import { CheckoutModal } from "@/components/checkout-modal"
 import { ProductImage } from "@/components/product-image"
@@ -15,7 +15,20 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser"
-import { useCartStore } from "@/lib/store"
+import {
+  calculateCartTotal,
+  cartCheckoutBlockMessage,
+  cartPersistenceMessage,
+  evaluateOrdinaryCartCheckout,
+  getCartHydrationSnapshot,
+  getCartPersistenceSnapshot,
+  getServerCartHydrationSnapshot,
+  getServerCartPersistenceSnapshot,
+  subscribeToCartHydration,
+  subscribeToCartPersistence,
+  useCartVisibilityStore,
+  useCartStore,
+} from "@/lib/store"
 import { formatNaira, getProductImage } from "@/lib/utils"
 
 type CustomerProfileReadiness = {
@@ -36,15 +49,49 @@ export function CartSidebar() {
   )
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const items = useCartStore((state) => state.items)
-  const isCartOpen = useCartStore((state) => state.isCartOpen)
-  const setCartOpen = useCartStore((state) => state.setCartOpen)
+  const isCartOpen = useCartVisibilityStore((state) => state.isCartOpen)
+  const setCartOpen = useCartVisibilityStore((state) => state.setCartOpen)
   const removeItem = useCartStore((state) => state.removeItem)
   const updateQuantity = useCartStore((state) => state.updateQuantity)
   const totalItems = useCartStore((state) => state.totalItems())
-  const totalPrice = useCartStore((state) => state.totalPrice())
+  const cartTotal = calculateCartTotal(items)
+  const hasHydratedCart = useSyncExternalStore(
+    subscribeToCartHydration,
+    getCartHydrationSnapshot,
+    getServerCartHydrationSnapshot
+  )
+  const persistenceHealth = useSyncExternalStore(
+    subscribeToCartPersistence,
+    getCartPersistenceSnapshot,
+    getServerCartPersistenceSnapshot
+  )
+  const checkoutEvaluation = evaluateOrdinaryCartCheckout(
+    items,
+    hasHydratedCart,
+    persistenceHealth.status
+  )
+  const persistenceNotice = cartPersistenceMessage(
+    hasHydratedCart,
+    persistenceHealth.status
+  )
+  const checkoutSafetyNotice = checkoutEvaluation.eligible
+    ? null
+    : cartCheckoutBlockMessage(checkoutEvaluation.reason)
 
   const handleProceedToCheckout = async () => {
     if (isCheckingCheckoutAccess) return
+
+    const currentEvaluation = evaluateOrdinaryCartCheckout(
+      useCartStore.getState().items,
+      useCartStore.persist.hasHydrated(),
+      getCartPersistenceSnapshot().status
+    )
+    if (!currentEvaluation.eligible) {
+      setCheckoutGateError(
+        cartCheckoutBlockMessage(currentEvaluation.reason)
+      )
+      return
+    }
 
     setIsCheckingCheckoutAccess(true)
     setCheckoutGateError(null)
@@ -106,6 +153,18 @@ export function CartSidebar() {
         return
       }
 
+      const finalEvaluation = evaluateOrdinaryCartCheckout(
+        useCartStore.getState().items,
+        useCartStore.persist.hasHydrated(),
+        getCartPersistenceSnapshot().status
+      )
+      if (!finalEvaluation.eligible) {
+        setCheckoutGateError(
+          cartCheckoutBlockMessage(finalEvaluation.reason)
+        )
+        return
+      }
+
       setCartOpen(false)
       setIsCheckoutOpen(true)
     } catch {
@@ -148,6 +207,15 @@ export function CartSidebar() {
             </button>
           </SheetHeader>
 
+          {persistenceNotice && (
+            <div
+              role="status"
+              className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-900"
+            >
+              {persistenceNotice}
+            </div>
+          )}
+
           {items.length === 0 ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto overscroll-contain px-6 text-center touch-pan-y [-webkit-overflow-scrolling:touch]">
               <ShoppingBag className="size-20 text-zinc-200" />
@@ -170,7 +238,7 @@ export function CartSidebar() {
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 touch-pan-y [-webkit-overflow-scrolling:touch]">
                 <div className="space-y-4 py-4 pb-6">
                   {items.map((item) => (
-                    <div key={item.product.id}>
+                    <div key={item.cartLineId}>
                       <div className="flex gap-3">
                         <ProductImage
                           src={getProductImage(item.product.images)}
@@ -188,10 +256,20 @@ export function CartSidebar() {
                               <p className="text-sm text-amber-600">
                                 {formatNaira(item.product.price)}
                               </p>
+                              {item.kind === "variant" && (
+                                <p className="mt-1 text-xs leading-5 text-zinc-500">
+                                  {item.variant.selected_options
+                                    .map(
+                                      (option) =>
+                                        `${option.axis_label}: ${option.value_label}`
+                                    )
+                                    .join(" · ")}
+                                </p>
+                              )}
                             </div>
                             <button
                               type="button"
-                              onClick={() => removeItem(item.product.id)}
+                              onClick={() => removeItem(item.cartLineId)}
                               className="text-red-400 transition-colors hover:text-red-600"
                               aria-label={`Remove ${item.product.name}`}
                             >
@@ -203,7 +281,7 @@ export function CartSidebar() {
                               type="button"
                               onClick={() =>
                                 updateQuantity(
-                                  item.product.id,
+                                  item.cartLineId,
                                   item.quantity - 1
                                 )
                               }
@@ -219,13 +297,19 @@ export function CartSidebar() {
                               type="button"
                               onClick={() =>
                                 updateQuantity(
-                                  item.product.id,
+                                  item.cartLineId,
                                   item.quantity + 1
                                 )
                               }
                               className="flex size-7 items-center justify-center rounded bg-zinc-100 text-sm font-medium text-zinc-700 disabled:cursor-not-allowed disabled:text-zinc-300"
                               aria-label="Increase quantity"
-                              disabled={item.quantity >= item.product.stock}
+                              disabled={
+                                item.quantity >= 99 ||
+                                item.quantity >=
+                                  (item.kind === "ordinary"
+                                    ? item.stock_snapshot
+                                    : item.variant.stock_snapshot)
+                              }
                             >
                               <Plus className="size-3.5" />
                             </button>
@@ -242,7 +326,9 @@ export function CartSidebar() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-zinc-500">Subtotal</span>
                   <span className="text-lg font-bold text-zinc-900">
-                    {formatNaira(totalPrice)}
+                    {cartTotal.valid
+                      ? formatNaira(cartTotal.total)
+                      : "Unavailable"}
                   </span>
                 </div>
                 <p className="text-xs text-zinc-500">
@@ -257,11 +343,23 @@ export function CartSidebar() {
                     {checkoutGateError}
                   </p>
                 )}
+                {!checkoutGateError &&
+                  items.length > 0 &&
+                  checkoutSafetyNotice && (
+                    <p
+                      role="status"
+                      className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-900"
+                    >
+                      {checkoutSafetyNotice}
+                    </p>
+                  )}
                 <Separator />
                 <Button
                   type="button"
                   onClick={handleProceedToCheckout}
-                  disabled={isCheckingCheckoutAccess}
+                  disabled={
+                    isCheckingCheckoutAccess || !checkoutEvaluation.eligible
+                  }
                   className="h-auto w-full rounded-lg bg-amber-500 py-3 font-semibold text-zinc-900 hover:bg-amber-400"
                 >
                   {isCheckingCheckoutAccess ? (

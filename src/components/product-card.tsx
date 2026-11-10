@@ -5,9 +5,11 @@ import Link from "next/link"
 
 import { ProductImage } from "@/components/product-image"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/use-toast"
+import { buildOrdinaryCartItem } from "@/lib/cart-model"
 import { useCartStore } from "@/lib/store"
 import { cn, formatNaira, getProductImage } from "@/lib/utils"
-import type { Product, StorefrontProduct } from "@/types"
+import type { StorefrontProduct } from "@/types"
 
 interface ProductCardProps {
   product: StorefrontProduct
@@ -125,9 +127,30 @@ export function ProductCard({ product, index, vendorName }: ProductCardProps) {
   )
 }
 
-function OrdinaryProductCardAction({ product }: { product: Product }) {
+function OrdinaryProductCardAction({
+  product,
+}: {
+  product: StorefrontProduct
+}) {
   const addItem = useCartStore((state) => state.addItem)
   const isOutOfStock = product.stock <= 0
+
+  const handleAddToCart = () => {
+    if (isOutOfStock) return
+
+    const item = buildOrdinaryCartItem({ product, quantity: 1 })
+    const result = item ? addItem(item) : "invalid"
+    if (result !== "applied") {
+      toast({
+        title: "Cart not updated",
+        description:
+          result === "invalid"
+            ? "This product cannot be added to the cart."
+            : "Your saved cart is not ready for safe changes yet.",
+        variant: "destructive",
+      })
+    }
+  }
 
   return (
     <Button
@@ -135,7 +158,7 @@ function OrdinaryProductCardAction({ product }: { product: Product }) {
       onClick={(event) => {
         event.preventDefault()
         event.stopPropagation()
-        if (!isOutOfStock) addItem(product)
+        handleAddToCart()
       }}
       disabled={isOutOfStock}
       className={cn(

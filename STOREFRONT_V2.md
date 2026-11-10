@@ -750,10 +750,12 @@ and returns only explicit eligible combinations. Zero-stock combinations remain
 explicitly represented, but availability requires an in-stock combination and
 never substitutes parent stock for variant stock.
 
-**Batch 2C-D3-A2 local implementation and source/browser QA are complete. Git
-closeout and production application deployment are pending.** The local customer
-integration now covers the homepage, catalogue and search results, product detail,
-related products, and same-vendor products. Ordinary products continue to use
+**Batch 2C-D3-A2 is committed and its production application release is
+complete.** Commit `f5fc62be2265059b839068cbf21d816e1ec3df8d` is running in
+READY deployment `dpl_3g33aQTzfGDr3Mbow9YnY4eALTtU` at
+`https://marketa-store.vercel.app`. The production customer integration covers
+the homepage, catalogue and search results, product detail, related products,
+and same-vendor products. Ordinary products continue to use
 ordinary stock. Variant cards consume the public projection's availability fields
 without falling back to parent stock, show **Select Options**, and avoid loading the
 exact projection RPC until a customer opens a variant product detail page.
@@ -773,7 +775,8 @@ handled empty result for a stale or out-of-range page instead of surfacing
 PostgREST `PGRST103`; catalogue links reset pagination when filters or search change.
 
 Validation after the final corrections comprised 209 focused and regression tests,
-TypeScript, changed-file ESLint, a production build, and rendered Chrome QA. Browser
+TypeScript, changed-file ESLint, a production build, and rendered Chrome QA. The
+owner then completed nine successful production storefront smoke checks. Browser
 coverage used ordinary live catalogue data and a controlled local projection fixture
 for selector states; it did not exercise a real production variant publication,
 variant cart line, checkout request, or payment. Full-tree ESLint still has the
@@ -785,25 +788,75 @@ the availability filter, and 23.775 ms and 22,641 shared hits for the
 100-combination projection. They are not production performance guarantees.
 Performance assessment remains required before broad storefront rollout.
 
-Later controlled stages remain:
+**Batch 2C-D3-A3 technical implementation is complete and locally accepted;
+it is not committed, pushed, or deployed.** Its pure cart contract models
+ordinary and variant lines with the discriminated `CartItemV1` type and assigns
+every line an exact deterministic `cartLineId`. Ordinary identity is based on
+the product UUID; variant identity includes both the product and exact variant
+UUID. No name-based merge or parent-only variant fallback is permitted.
+Ordinary Add to Cart remains active. Variant cart lines are structurally
+supported for the staged architecture, while the customer selector and all
+customer variant purchasing remain disabled.
 
-- **2C-D3-A2 — Local implementation and QA complete; Git closeout and production
-  application deployment pending:** customer option selector, storefront
-  availability, punctuation-safe search, and bounded pagination.
-- **2C-D3-A3 — Pending:** variant cart-line identity and Zustand persistence
-  migration.
-- **2C-D3-A4 — Pending:** fail-closed variant checkout gate and comprehensive
-  regression tests.
+The existing `marketa-cart` record uses persistence version 1. Supported
+version-0 ordinary carts migrate safely through the accepted legacy normalizer,
+which never infers a variant identity. Storage health is explicit and protects
+saved customer bytes: mutations wait for completed hydration, require a safe
+health state, preserve recoverably corrupt data until an explicit valid content
+mutation, and retain an unsupported future-version lifetime lock. Cart
+aggregation is performed in exact kobo with a maximum whole-cart total of
+999,999,999,999 kobo. Persisted price and stock values remain non-authoritative
+snapshots.
+
+Cart visibility moved to a separate non-persisted Zustand UI store containing
+only `isCartOpen` and `setCartOpen`. Open and close transitions notify React
+subscribers without writing or removing `marketa-cart` data. Content mutations
+continue through the persistence adapter. This prevents a visibility action
+from overwriting corrupt or future-version storage. Browser `localStorage`
+operations remain non-atomic across tabs.
+
+Checkout remains ordinary-only. The cart sidebar guard and the immediate
+pre-payment guard independently reject variant, malformed, unhydrated, unsafe,
+or otherwise ineligible carts. Eligible ordinary requests retain the existing
+`product_id` and `quantity` payload and ordinary fingerprint bytes.
+Payment-success cleanup clears only when healthy persisted ordinary-cart
+evidence matches the pending checkout. D3-A3 changes no database object,
+migration, Paystack integration, checkout Edge Function, paid-order finalizer,
+D2 constructor, publication rule, RLS policy, or ACL.
+
+Independent acceptance validation passed 921 of 921 repository tests,
+TypeScript, changed-file ESLint, the production build, and the executed Chrome
+QA. Browser QA covered ordinary cart operations, selected quantities, navbar
+counts, refresh persistence, version-0 migration, valid version-1 reload,
+corrupt-storage warning preservation and explicit repair, future-version
+protection, checkout eligibility and blocking, zero-write visibility changes,
+and mobile cart layout. Rendered variant-selector browser QA was not executed
+because no public variant fixture exists under the draft-only publication
+policy. Dedicated selector source tests passed and preserve the disabled
+purchasing boundary; the rendered case remains explicitly untested.
+
+Controlled-stage status:
+
+- **2C-D3-A2 — Complete:** committed, deployed READY, and production
+  smoke-tested with ordinary commerce preserved, the customer option selector
+  integrated, and search and pagination hardened.
+- **2C-D3-A3 — Complete and locally accepted:** source and independent QA are
+  complete. Commit, push, deployment, and production release approval remain
+  outstanding; controlled release review is next.
+- **2C-D3-A4 — Pending:** checkout separation and its separately authorized
+  regression scope are not implemented.
 - **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
   and order-history snapshot presentation.
 - **2C-D5 — Pending:** controlled vendor variant activation and publication.
 
-The production application does not yet contain the local D3-A2 integration.
-D3-A2 does not add variant cart identity, cut over checkout, modify Paystack or the
-paid-order finalizer, activate or publish variants, alter D2/RLS/ACL authority, or
-enable customer variant purchasing. D2 remains dormant and both draft-only
+The production application remains at the accepted D3-A2 integration; D3-A3 is
+local only. No production variant cart or purchasing path is active, checkout
+has not been cut over, and Paystack, the paid-order finalizer, D2/RLS/ACL
+authority, activation, and publication remain unchanged. Production currently
+has no published variant parents. D2 remains dormant and both draft-only
 publication constraints remain validated. True two-session active-variant
-concurrency remains a D5 release gate.
+concurrency remains a D5 release gate. Local D3-A3 acceptance does not authorize
+production release.
 
 ### Phase 4 — Customer experience
 

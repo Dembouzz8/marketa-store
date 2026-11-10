@@ -25,27 +25,25 @@ import {
   getPaymentStatus,
   isOrderId,
   isPaymentReference,
+  pendingCheckoutMatchesCart,
   readPendingCheckout,
   removeCheckoutAttemptForCart,
   removePendingCheckout,
 } from "@/lib/payment-recovery"
-import { useCartStore } from "@/lib/store"
+import {
+  getCartHydrationSnapshot,
+  getCartPersistenceSnapshot,
+  getServerCartHydrationSnapshot,
+  getServerCartPersistenceSnapshot,
+  subscribeToCartHydration,
+  subscribeToCartPersistence,
+  useCartStore,
+} from "@/lib/store"
 
 type PaymentView = "verifying" | "confirmed" | "processing" | "unknown"
 
 const MAX_PROCESSING_POLLS = 12
 const DEFAULT_RETRY_DELAY_MS = 2000
-
-function subscribeToCartHydration(onStoreChange: () => void) {
-  const unsubscribeHydrate = useCartStore.persist.onHydrate(onStoreChange)
-  const unsubscribeFinish =
-    useCartStore.persist.onFinishHydration(onStoreChange)
-
-  return () => {
-    unsubscribeHydrate()
-    unsubscribeFinish()
-  }
-}
 
 export default function PaymentSuccessPage() {
   return (
@@ -82,10 +80,16 @@ function PaymentSuccessContent() {
   const clearCart = useCartStore((state) => state.clearCart)
   const hasHydratedCart = useSyncExternalStore(
     subscribeToCartHydration,
-    () => useCartStore.persist.hasHydrated(),
-    () => false
+    getCartHydrationSnapshot,
+    getServerCartHydrationSnapshot
+  )
+  const persistenceHealth = useSyncExternalStore(
+    subscribeToCartPersistence,
+    getCartPersistenceSnapshot,
+    getServerCartPersistenceSnapshot
   )
   const completedCheckoutRef = useRef<string | null>(null)
+  const celebratedCheckoutRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!callbackIsValid) return
@@ -144,7 +148,28 @@ function PaymentSuccessContent() {
   }, [callbackIsValid, orderId, reference, verificationRun])
 
   useEffect(() => {
-    if (view !== "confirmed" || !hasHydratedCart) return
+    if (view !== "confirmed") return
+
+    const checkoutKey = `${orderId}:${reference}`
+    if (celebratedCheckoutRef.current === checkoutKey) return
+    celebratedCheckoutRef.current = checkoutKey
+
+    confetti({
+      particleCount: 150,
+      spread: 70,
+      origin: { y: 0.6 },
+      colors: ["#f59e0b", "#18181b", "#ffffff", "#10b981"],
+    })
+  }, [orderId, reference, view])
+
+  useEffect(() => {
+    if (
+      view !== "confirmed" ||
+      !hasHydratedCart ||
+      persistenceHealth.status !== "healthy"
+    ) {
+      return
+    }
 
     const checkoutKey = `${orderId}:${reference}`
     let cancelled = false
@@ -159,26 +184,26 @@ function PaymentSuccessContent() {
       if (cancelled || completedCheckoutRef.current === checkoutKey) {
         return
       }
-      completedCheckoutRef.current = checkoutKey
+
+      if (getCartPersistenceSnapshot().status !== "healthy") return
 
       const pendingCheckout = readPendingCheckout(orderId, reference)
       if (pendingCheckout) {
         const currentCartFingerprint = createCartFingerprint(
           useCartStore.getState().items
         )
-        if (pendingCheckout.cart_fingerprint === currentCartFingerprint) {
-          clearCart()
+        if (
+          pendingCheckoutMatchesCart(
+            pendingCheckout,
+            currentCartFingerprint
+          ) &&
+          clearCart() === "applied"
+        ) {
+          completedCheckoutRef.current = checkoutKey
+          removeCheckoutAttemptForCart(pendingCheckout.cart_fingerprint)
+          removePendingCheckout(orderId, reference)
         }
-        removeCheckoutAttemptForCart(pendingCheckout.cart_fingerprint)
-        removePendingCheckout(orderId, reference)
       }
-
-      confetti({
-        particleCount: 150,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ["#f59e0b", "#18181b", "#ffffff", "#10b981"],
-      })
     }
 
     void finalizeConfirmedCheckout()
@@ -190,6 +215,7 @@ function PaymentSuccessContent() {
     clearCart,
     hasHydratedCart,
     orderId,
+    persistenceHealth.status,
     reference,
     view,
   ])

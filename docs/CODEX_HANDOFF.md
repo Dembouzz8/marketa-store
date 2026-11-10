@@ -1,18 +1,19 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-11-06. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-10. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `1ae1ab06f44ea0ebf974cd8cf5aab9ceb52cce6f`.
+- HEAD: `f5fc62be2265059b839068cbf21d816e1ec3df8d`.
 - Local `origin/main`: the same commit.
-- Before this documentation update, the working tree contained exactly the 14
-  approved D3-A2 application and test files. This documentation batch also
-  modifies only `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`;
-  the approved D3-A2 source and test artifacts remain unchanged.
+- Before this documentation closeout, the working tree contained exactly the
+  accepted 15 D3-A3 application/test paths plus the three existing D3-A2
+  documentation changes. This documentation-only task updates only
+  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; accepted D3-A3
+  source and test hashes remain unchanged. Nothing is staged.
 - Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, 2C-D2, and
   2C-D3-A1 are applied to the linked production database through
   `20261106105539_add_public_product_variant_projection.sql`. The production
@@ -171,9 +172,11 @@ explicit eligible combinations. It preserves zero-stock combinations while
 requiring real variant stock for availability; it never falls back to parent
 stock.
 
-**Batch 2C-D3-A2 local implementation and source/browser QA are complete; Git
-closeout and production application deployment are pending.** The local customer
-integration uses the D3-A1 public product projection across the homepage,
+**Batch 2C-D3-A2 is committed and its production application release is
+complete.** Commit `f5fc62be2265059b839068cbf21d816e1ec3df8d` is running in
+READY deployment `dpl_3g33aQTzfGDr3Mbow9YnY4eALTtU` at
+`https://marketa-store.vercel.app`. The production customer integration uses
+the D3-A1 public product projection across the homepage,
 catalogue/search, product detail, related products, and same-vendor products.
 Ordinary products retain ordinary stock behavior. Variant cards use only projected
 variant availability, show **Select Options**, and do not invoke the exact variant
@@ -195,34 +198,65 @@ uses a bounded count-first query and handles stale pages without exposing
 `PGRST103`; links reset to page 1 when search or filters change.
 
 Final validation comprised 209 focused and regression tests, TypeScript,
-changed-file ESLint, a production build, and rendered Chrome QA. The browser pass
-used ordinary live catalogue data and a controlled local projection fixture; it did
-not execute real variant publication, cart, checkout, or payment. Full-tree ESLint
+changed-file ESLint, a production build, and rendered Chrome QA. The owner then
+completed nine successful production storefront smoke checks. The QA did not
+execute real variant publication, cart, checkout, or payment. Full-tree ESLint
 still reports the parked payout-table error and three existing image warnings;
-changed-file ESLint passes.
-
-Release configuration evidence shows recent GitHub `main` commits producing Vercel
-production deployments for project `marketa-store`, so pushing this closeout to
-`main` is expected to trigger production deployment. The repository has no GitHub
-workflow, `vercel.json`, or local `.vercel/project.json`; the exact Vercel dashboard
-production-branch and automatic-deployment settings therefore still require an
-operator check before push. `npm run build` runs `next build` and does not invoke
-full-tree ESLint, and no repository CI lint gate exists. Any account-level Vercel
-deployment checks remain externally configured and unverified. A prior READY
-production deployment is visible as a platform rollback candidate, but the
-repository has no application rollback runbook.
+changed-file ESLint passes. The repository has no application rollback runbook.
 
 Disposable synthetic performance was 35.760 ms with 28,515 shared hits for the
 availability filter and 23.775 ms with 22,641 shared hits for the
 100-combination projection. These figures are not production guarantees.
 Performance assessment is required before broad storefront rollout.
 
-Remaining release work starts with D3-A2 Git closeout and production application
-deployment. Engineering work then continues with 2C-D3-A3 variant cart identity
-and Zustand persistence migration, 2C-D3-A4 a fail-closed variant checkout gate
-and comprehensive regression tests, 2C-D4 checkout cutover and order-history
-snapshot presentation, and 2C-D5 controlled activation, publication, and final
-release gates. True two-session active-variant concurrency remains a D5 gate.
+**Batch 2C-D3-A3 technical implementation is complete and locally accepted;
+commit, push, production deployment, and production release approval have not
+occurred.** The accepted `CartItemV1` contract distinguishes ordinary and
+variant lines and gives every line an exact deterministic `cartLineId`.
+Ordinary identity uses the product UUID; variant identity uses the product and
+exact variant UUID. Ordinary Add to Cart remains functional. Variant lines are
+structurally supported, but the selector cannot add them and customer variant
+purchasing remains disabled.
+
+The existing `marketa-cart` persistence record is version 1. Supported
+version-0 ordinary carts migrate without inferring variant identity.
+Browser-storage health protects customer bytes across unchecked, healthy,
+recoverably corrupt, unavailable, and incompatible states. Active mutations
+require completed hydration and safe health, and unsupported future-version
+bytes remain protected by a lifetime lock. Totals use exact kobo arithmetic and
+enforce a whole-cart ceiling of 999,999,999,999 kobo. Stored price and stock
+values are non-authoritative snapshots.
+
+Cart visibility now uses an independent non-persisted Zustand UI store with
+only `isCartOpen` and `setCartOpen`. Opening and closing notify React
+subscribers without writing or removing `marketa-cart` data. Explicit content
+mutations still use the accepted persistence adapter. Browser `localStorage`
+operations are not atomic across tabs.
+
+Two independent checkout guards reject variant, malformed, unhydrated, unsafe,
+or otherwise ineligible carts, including a fresh check immediately before
+payment initialization. Ordinary checkout retains the existing `product_id`
+plus `quantity` payload and compatible ordinary cart fingerprint.
+Payment-success cleanup requires matching healthy ordinary-cart evidence.
+D3-A3 changes no database object, migration, Paystack integration, checkout
+Edge Function, paid-order finalizer, D2 constructor, publication rule, RLS
+policy, or ACL.
+
+Final independent validation passed 921 of 921 repository tests, TypeScript,
+changed-file ESLint, the production build, and the executed Chrome QA. Ordinary
+cart behavior, selected quantities, navbar counts, refresh persistence,
+version-0 migration, valid version-1 reload, corrupt and future-version storage
+protection, ordinary checkout entry, variant checkout blocking, zero-write
+visibility changes, and mobile cart layout passed. Rendered variant-selector
+browser QA was not executed because the public catalogue has no published
+variant fixture. Dedicated selector source tests passed and purchasing remains
+disabled; the rendered case is not recorded as passed.
+
+The next operational step is a controlled D3-A3 release review. D3-A4 checkout
+separation, D4 checkout Edge Function cutover and order-history snapshot
+presentation, and D5 controlled activation/publication remain pending. True
+two-session active-variant concurrency remains a D5 gate. Local D3-A3 technical
+acceptance does not authorize deployment or production variant purchasing.
 
 ## Vendor provisioning status
 
@@ -695,13 +729,17 @@ Completed:
   variant order construction.
 - Batch 2C-D3-A1 production installation and verification for the sanitized
   public product view and explicit variant projection RPC.
+- Batch 2C-D3-A2 production application release for the customer selector,
+  storefront availability integration, punctuation-safe search, and bounded
+  out-of-range pagination. Commit, READY deployment, and nine owner production
+  smoke checks are complete.
 
-Locally complete; release pending:
+Locally complete; controlled release review next:
 
-- Batch 2C-D3-A2 customer selector and storefront availability integration,
-  including punctuation-safe search and bounded out-of-range pagination. Source
-  and browser QA passed; Git closeout and production application deployment are
-  pending.
+- Batch 2C-D3-A3 variant cart-line identity and backward-compatible Zustand
+  persistence migration. Technical implementation and independent acceptance
+  are complete. Commit, push, production deployment, and production release
+  approval have not been performed.
 
 Paused:
 
@@ -756,23 +794,23 @@ Deferred validation:
 - Generic variants remain draft-only. D2 trusted order construction is
   installed but dormant because the current checkout Edge Function does not
   call it.
-- D3-A2 locally integrates the installed D3-A1 read contracts into customer
-  storefront queries, but it is not committed or deployed. Production therefore
-  remains at the D3-A1 application state. Variant cart identity, checkout
-  integration, publication, and variant-specific purchasing remain unavailable
-  until D3-A3, D3-A4, D4, and D5 are implemented and validated. True two-session
-  active-variant races remain a D5 publication-release gate.
+- D3-A2 integrates the installed D3-A1 read contracts into production customer
+  storefront queries. D3-A3 cart identity and persistence are implemented and
+  locally accepted but are not committed, pushed, or deployed. D3-A4 checkout
+  separation, D4 cutover, D5 publication, and variant-specific purchasing
+  remain unavailable. Production currently has no published variant parents.
+  True two-session active-variant races remain a D5 publication-release gate.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
 state through deployed Universal Product Variants Batches 2C-B1, 2C-B2,
-2C-B3, 2C-C2, 2C-C3, 2C-D2, and 2C-D3-A1, with Batch 2C-C1 architecture
-reconciliation complete. D3-A2 customer selection and storefront availability
-are locally implemented and validated, with Git closeout and production
-application deployment pending. D2 remains dormant. Variant cart identity,
-checkout cutover, and publication remain deferred through D3-A3, D3-A4, D4,
-and D5. Real paid-order delivery remains paused before provider enablement. No
+2C-B3, 2C-C2, 2C-C3, 2C-D2, 2C-D3-A1, and the D3-A2 production application
+release, with Batch 2C-C1 architecture reconciliation complete. D2 remains
+dormant. D3-A3 cart identity and persistence are complete and locally accepted
+but not committed, pushed, or deployed. D3-A4 checkout separation, D4 cutover,
+D5 publication, and customer variant purchasing remain pending. Real
+paid-order delivery remains paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

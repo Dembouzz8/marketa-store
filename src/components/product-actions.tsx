@@ -5,10 +5,11 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { ProductVariantSelector } from "@/components/product-variant-selector"
+import { toast } from "@/components/ui/use-toast"
+import { buildOrdinaryCartItem } from "@/lib/cart-model"
 import { useCartStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import type {
-  Product,
   PublicProductVariantProjection,
   StorefrontProduct,
 } from "@/types"
@@ -32,16 +33,26 @@ export function ProductActions({
   return <OrdinaryProductActions product={product} />
 }
 
-function OrdinaryProductActions({ product }: { product: Product }) {
+function OrdinaryProductActions({ product }: { product: StorefrontProduct }) {
   const addItem = useCartStore((state) => state.addItem)
   const [quantity, setQuantity] = useState(1)
   const isOutOfStock = product.stock <= 0
+  const maximumQuantity = Math.min(product.stock, 99)
 
   const handleAddToCart = () => {
     if (isOutOfStock) return
 
-    for (let item = 0; item < quantity; item += 1) {
-      addItem(product)
+    const item = buildOrdinaryCartItem({ product, quantity })
+    const result = item ? addItem(item) : "invalid"
+    if (result !== "applied") {
+      toast({
+        title: "Cart not updated",
+        description:
+          result === "invalid"
+            ? "This product cannot be added to the cart."
+            : "Your saved cart is not ready for safe changes yet.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -77,8 +88,10 @@ function OrdinaryProductActions({ product }: { product: Product }) {
           </span>
           <button
             type="button"
-            onClick={() => setQuantity((current) => Math.min(product.stock, current + 1))}
-            disabled={isOutOfStock || quantity >= product.stock}
+            onClick={() =>
+              setQuantity((current) => Math.min(maximumQuantity, current + 1))
+            }
+            disabled={isOutOfStock || quantity >= maximumQuantity}
             className="flex size-11 items-center justify-center text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:text-zinc-300"
             aria-label="Increase quantity"
           >
