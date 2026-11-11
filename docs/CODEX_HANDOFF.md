@@ -1,18 +1,21 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-11-10. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-11. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`.
+- HEAD: `172156b5bc4da358631a3f92781d6c7059b78172`.
 - Local `origin/main`: the same commit.
-- Before this post-release documentation update, the working tree was clean at
-  the D3-A3 release commit. This documentation-only task updates only
-  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`; application and
-  test sources remain unchanged. Nothing is staged.
+- Before this documentation closeout, the working tree contained exactly the
+  five independently accepted D3-A4 paths: modified `src/types/index.ts`,
+  `src/lib/payment-recovery.ts`, `src/components/checkout-modal.tsx`, and
+  `tests/cart-checkout-boundary.test.mjs`, plus untracked
+  `src/lib/checkout-separation.ts`. This documentation-only task additionally
+  updates `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`. Nothing
+  is staged, and no application or test file was changed by the closeout.
 - Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, 2C-D2, and
   2C-D3-A1 are applied to the linked production database through
   `20261106105539_add_public_product_variant_projection.sql`. The production
@@ -270,11 +273,38 @@ upgraded version-1 carts because that build can read them as empty and overwrite
 their persisted contents. Preserve version-1 cart data and issue a forward fix
 if a production defect is found.
 
-D3-A4 checkout separation is the next development milestone and has not
-started. D4 checkout Edge Function cutover and order-history snapshot
-presentation and D5 controlled activation/publication remain pending. True
-two-session active-variant concurrency remains a D5 gate. The D3-A3 release
-does not authorize production variant purchasing.
+**Batch 2C-D3-A4 checkout separation is technically complete and independently
+accepted locally, but has not been released.** It introduces a pure client-side
+separation contract with discriminated ordinary and variant checkout
+identities. Exact variant identity includes `product_variant_id`. Only a wholly
+valid ordinary cart can produce the established wire items of `product_id` and
+`quantity`; variant-only, mixed, duplicate, malformed, and unknown carts fail
+closed as a whole. Invalid siblings cannot be filtered into a payable subset,
+and variant lines never fall back to the parent product. Display prices, stock,
+labels, and selected options remain non-authoritative.
+
+The existing ordinary fingerprint and supported attempt and pending-checkout
+recovery behavior remain compatible. After asynchronous authentication, the
+modal reads the latest Zustand cart, runs the existing D3-A3 eligibility guard,
+and derives both the fingerprint and request from one successful preparation.
+The existing sidebar and modal guards remain. D3-A4 activates no variant
+fingerprint, variant wire payload, payment initialization, D2 constructor call,
+Edge Function, database, migration, Paystack, or publication change.
+
+Acceptance passed 929 of 929 repository tests, including 16 of 16 checkout
+boundary tests, TypeScript, changed-file ESLint, and the production build.
+Synthetic Chrome/CDP QA passed ordinary modal entry, exact ordinary request
+identity, current-cart revalidation, variant-only and mixed rejection,
+signed-out login redirection, and mobile checkout entry. The incomplete-profile
+redirect was not verified end-to-end because the synthetic token was rejected;
+it remains a targeted pre-release check and is not recorded as passed. No real
+payment was submitted.
+
+D4 remains the future controlled checkout Edge Function cutover to the trusted
+D2 constructor for server-authoritative variant checkout and related order
+presentation. D5 remains controlled variant publication and customer purchasing
+activation. True two-session active-variant concurrency remains a D5 gate, and
+variant purchasing remains disabled.
 
 ## Vendor provisioning status
 
@@ -756,11 +786,15 @@ Completed:
   visibility. Commit `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`, READY
   deployment `dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4`, and non-payment production
   smoke testing are complete.
+- Batch 2C-D3-A4 client-side checkout separation is implemented and
+  independently accepted locally. It is not released to production; the
+  incomplete-profile browser redirect remains a targeted pre-release check.
 
 Next development milestone:
 
-- Batch 2C-D3-A4 checkout separation and its separately authorized regression
-  scope. Implementation has not started.
+- Batch 2C-D4 controlled checkout Edge Function cutover to the trusted D2 order
+  constructor, server-authoritative variant checkout, and related order
+  presentation.
 
 Paused:
 
@@ -819,10 +853,10 @@ Deferred validation:
   storefront queries. D3-A3 cart identity and persistence are released to
   production under the forward-fix-first policy; the original D3-A2 build is
   unsafe for upgraded version-1 carts and must not be used as a rollback target.
-  D3-A4 checkout separation is next. D4 cutover, D5 publication, and
-  variant-specific purchasing remain unavailable. Production currently has no
-  published variant parents. True two-session active-variant races remain a D5
-  publication-release gate.
+  D3-A4 checkout separation is complete and locally accepted but not deployed.
+  D4 cutover, D5 publication, and variant-specific purchasing remain
+  unavailable. Production currently has no published variant parents. True
+  two-session active-variant races remain a D5 publication-release gate.
 
 ## Documentation alignment
 
@@ -830,9 +864,10 @@ This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the stated production
 state through deployed Universal Product Variants Batches 2C-B1, 2C-B2,
 2C-B3, 2C-C2, 2C-C3, 2C-D2, 2C-D3-A1, D3-A2, and the D3-A3 production
 application release, with Batch 2C-C1 architecture reconciliation complete. D2
-remains dormant. D3-A4 checkout separation is the next development milestone;
-D4 cutover, D5 publication, and customer variant purchasing remain pending.
-Real paid-order delivery remains paused before provider enablement. No
+remains dormant. D3-A4 checkout separation is implemented and independently
+accepted locally but not released. D4 cutover, D5 publication, and customer
+variant purchasing remain pending. Real paid-order delivery remains paused
+before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

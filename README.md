@@ -529,6 +529,33 @@ version-1 carts because that build can treat them as empty and overwrite their
 persisted contents. If a release defect is found, preserve version-1 cart data
 and ship a forward fix rather than restoring the original D3-A2 application.
 
+**Batch 2C-D3-A4 is technically complete and locally accepted, but has not been
+released to production.** It adds an explicit client-side checkout-separation
+layer with discriminated ordinary and variant checkout identities. Variant
+identity retains the exact `product_variant_id`; only a wholly valid ordinary
+cart can produce the existing live request items of `product_id` and
+`quantity`. Variant-only, mixed, duplicate, malformed, and unknown carts fail
+closed as a whole. Invalid lines are never filtered into a payable subset, and
+variant identity never falls back to the parent product. Display prices, stock,
+labels, and selected options remain non-authoritative.
+
+The ordinary fingerprint bytes and supported checkout-attempt and pending-cart
+recovery behavior remain compatible. After asynchronous authentication, the
+checkout modal reads the latest Zustand cart, applies the existing D3-A3
+eligibility guard, and then derives the request and fingerprint from one
+validated preparation. No variant fingerprint, variant wire payload, payment
+initialization, D2 constructor call, Edge Function change, database change,
+Paystack change, or publication change was activated.
+
+D3-A4 acceptance passed all 929 repository tests, including 16 of 16 checkout
+boundary tests, plus TypeScript, changed-file ESLint, and the production build.
+Synthetic Chrome/CDP QA passed ordinary modal entry, exact ordinary request
+identity, current-cart revalidation, variant-only and mixed rejection,
+signed-out login redirection, and mobile checkout entry. The incomplete-profile
+redirect was not independently verified end-to-end because the synthetic token
+was rejected; it remains a targeted pre-release check and is not recorded as
+passed. No real payment was submitted.
+
 The release status is:
 
 - **2C-D3-A2 — Complete:** committed, deployed READY, and production
@@ -538,16 +565,19 @@ The release status is:
   `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`, READY deployment
   `dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4`, and non-payment production smoke testing
   are complete.
-- **2C-D3-A4 — Next:** checkout separation and its separately authorized
-  regression scope are the next development milestone and are not implemented.
+- **2C-D3-A4 — Complete locally, not released:** checkout separation and its
+  regression scope are implemented and independently accepted. The targeted
+  incomplete-profile browser redirect remains a pre-release verification item.
 - **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
-  and order-history snapshot presentation.
-- **2C-D5 — Pending:** controlled vendor variant activation and publication.
+  for server-authoritative variant checkout and related order presentation.
+- **2C-D5 — Pending:** controlled variant publication and customer purchasing
+  activation.
 
-The production application includes the accepted D3-A3 cart identity and
-persistence release. There is no customer variant cart activation, checkout
-cutover, Paystack or payment-finalizer change, D2 construction cutover, RLS/ACL
-change, variant activation, publication, or customer variant purchasing.
+The production application still includes the released D3-A3 cart identity and
+persistence build; the accepted D3-A4 changes remain local. There is no customer
+variant cart activation, checkout cutover, Paystack or payment-finalizer change,
+D2 construction cutover, RLS/ACL change, variant activation, publication, or
+customer variant purchasing.
 Production currently has no published variant parents. D2 stays dormant, both
 draft-only publication constraints remain validated, and true two-session
 active-variant concurrency remains a D5 release gate.

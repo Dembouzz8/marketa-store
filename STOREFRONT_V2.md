@@ -854,6 +854,34 @@ upgraded version-1 carts because it can treat them as empty and overwrite their
 persisted contents. A production defect must be corrected forward while
 preserving version-1 cart data.
 
+**Batch 2C-D3-A4 is technically complete and independently accepted locally;
+it is not deployed.** The client now has an explicit pure checkout-separation
+contract. Ordinary and variant identities are discriminated, and variant
+identity retains the exact product and `product_variant_id`. Only a wholly valid
+ordinary cart produces the established request items containing exactly
+`product_id` and `quantity`. Variant-only, mixed, duplicate, malformed, and
+unknown carts are contained as a whole: no invalid-line filtering creates a
+payable subset, and no variant can fall back to its parent product. Display
+prices, stock snapshots, labels, and selected options have no payment authority.
+
+Ordinary fingerprint bytes and supported recovery behavior remain compatible.
+After asynchronous authentication, the checkout modal reads the current Zustand
+cart and runs both the existing D3-A3 evaluator and the new preparation before
+attempt creation or fetch. The request items and fingerprint come from the same
+validated preparation. The existing sidebar and modal guards remain in place.
+No variant payment fingerprint, variant request payload, payment initialization,
+D2 constructor call, Edge Function change, database or migration change,
+Paystack change, or publication change was introduced.
+
+Independent D3-A4 validation passed 929 of 929 repository tests, including 16
+of 16 checkout-boundary tests, TypeScript, changed-file ESLint, and the
+production build. Synthetic Chrome/CDP QA passed ordinary modal entry, exact
+ordinary request identity, current-cart revalidation, variant-only and mixed
+rejection, signed-out login redirection, and mobile checkout entry. The
+incomplete-profile redirect was not verified end-to-end because the synthetic
+token was rejected and remains a targeted pre-release check. No real payment
+was submitted.
+
 Release status:
 
 - **2C-D3-A2 — Complete:** committed, deployed READY, and production
@@ -863,18 +891,20 @@ Release status:
   `1fe86986fd9109fca48d3f3ce46e3f9595a3b4cc`, READY deployment
   `dpl_CV1t5UvuqRYDoxPTEqXgcQ8G1XH4`, and non-payment production smoke testing
   are complete.
-- **2C-D3-A4 — Next:** checkout separation and its separately authorized
-  regression scope are the next development milestone and are not implemented.
+- **2C-D3-A4 — Complete locally, not released:** checkout separation and its
+  regression scope are implemented and independently accepted. The targeted
+  incomplete-profile browser redirect remains a pre-release verification item.
 - **2C-D4 — Pending:** checkout Edge Function cutover to trusted construction
-  and order-history snapshot presentation.
-- **2C-D5 — Pending:** controlled vendor variant activation and publication.
+  for server-authoritative variant checkout and related order presentation.
+- **2C-D5 — Pending:** controlled variant publication and customer purchasing
+  activation.
 
-The production application includes the accepted D3-A3 cart identity and
-persistence release. No production variant cart or purchasing path is active,
-checkout has not been cut over, and Paystack, the paid-order finalizer,
-D2/RLS/ACL authority, activation, and publication remain unchanged. Production
-currently has no published variant parents. D2 remains dormant and both
-draft-only publication constraints remain validated. True two-session
+The production application still includes the released D3-A3 cart identity and
+persistence build; D3-A4 remains local. No production variant cart or purchasing
+path is active, checkout has not been cut over, and Paystack, the paid-order
+finalizer, D2/RLS/ACL authority, activation, and publication remain unchanged.
+Production currently has no published variant parents. D2 remains dormant and
+both draft-only publication constraints remain validated. True two-session
 active-variant concurrency remains a D5 release gate.
 
 ### Phase 4 — Customer experience

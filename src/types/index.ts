@@ -225,6 +225,28 @@ export type CartItemV1 = OrdinaryCartItem | VariantCartItem
 
 export type CartItem = CartItemV1
 
+export interface OrdinaryCheckoutIdentity {
+  kind: "ordinary"
+  product_id: string
+  quantity: number
+}
+
+export interface VariantCheckoutIdentity {
+  kind: "variant"
+  product_id: string
+  product_variant_id: string
+  quantity: number
+}
+
+export type CheckoutIdentity =
+  | OrdinaryCheckoutIdentity
+  | VariantCheckoutIdentity
+
+export interface OrdinaryCheckoutRequestItem {
+  product_id: string
+  quantity: number
+}
+
 export interface CheckoutFormData {
   shipping_address: {
     address: string
@@ -233,9 +255,9 @@ export interface CheckoutFormData {
   }
 }
 
-export interface CheckoutPayload {
+export interface OrdinaryCheckoutPayload {
   checkout_attempt_id: string
-  items: { product_id: string; quantity: number }[]
+  items: OrdinaryCheckoutRequestItem[]
   shipping_address: {
     address: string
     city: string

@@ -1,3 +1,4 @@
+import { createOrdinaryCartFingerprint } from "@/lib/checkout-separation"
 import type { CartItemV1 } from "@/types"
 
 export const PENDING_CHECKOUT_STORAGE_KEY = "marketa-pending-checkout"
@@ -45,30 +46,7 @@ export function isPaymentReference(value: string): boolean {
 export function createCartFingerprint(
   items: readonly CartItemV1[]
 ): string | null {
-  const productIds = new Set<string>()
-  const normalized: { product_id: string; quantity: number }[] = []
-
-  for (const item of items) {
-    if (
-      item.kind !== "ordinary" ||
-      !UUID_PATTERN.test(item.product.id) ||
-      !Number.isSafeInteger(item.quantity) ||
-      item.quantity < 1 ||
-      item.quantity > 99
-    ) {
-      return null
-    }
-
-    const productId = item.product.id.toLowerCase()
-    if (productIds.has(productId)) return null
-    productIds.add(productId)
-    normalized.push({ product_id: productId, quantity: item.quantity })
-  }
-
-  return JSON.stringify(
-    normalized
-      .sort((left, right) => left.product_id.localeCompare(right.product_id))
-  )
+  return createOrdinaryCartFingerprint(items)
 }
 
 export function pendingCheckoutMatchesCart(

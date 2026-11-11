@@ -22,8 +22,8 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
+import { prepareCheckoutSeparation } from "@/lib/checkout-separation"
 import {
-  createCartFingerprint,
   isOrderId,
   isPaymentReference,
   obtainCheckoutAttempt,
@@ -48,9 +48,8 @@ import { cn, formatNaira } from "@/lib/utils"
 import type {
   CheckoutErrorResponse,
   CheckoutFormData,
-  CheckoutPayload,
   CheckoutSuccessResponse,
-  OrdinaryCartItem,
+  OrdinaryCheckoutPayload,
 } from "@/types"
 
 interface CheckoutModalProps {
@@ -411,29 +410,18 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         )
       }
 
-      if (
-        !currentItems.every(
-          (item): item is OrdinaryCartItem => item.kind === "ordinary"
-        )
-      ) {
-        throw new CheckoutUiError(
-          "Products with selected options cannot be purchased yet."
-        )
-      }
-
-      const cartFingerprint = createCartFingerprint(currentItems)
-      if (cartFingerprint === null) {
+      const checkoutPreparation = prepareCheckoutSeparation(currentItems)
+      if (checkoutPreparation.status !== "ordinary") {
         throw new CheckoutUiError(
           "Review the products and quantities in your cart."
         )
       }
+
+      const cartFingerprint = checkoutPreparation.fingerprint
       const checkoutAttempt = obtainCheckoutAttempt(cartFingerprint)
-      const payload: CheckoutPayload = {
+      const payload: OrdinaryCheckoutPayload = {
         checkout_attempt_id: checkoutAttempt.checkout_attempt_id,
-        items: currentItems.map((item) => ({
-          product_id: item.product.id,
-          quantity: item.quantity,
-        })),
+        items: checkoutPreparation.requestItems,
         shipping_address: normalizeShippingAddress(formData),
       }
 
