@@ -3,8 +3,6 @@ import fs from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
-import vm from "node:vm"
-import ts from "typescript"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const functionFile = "supabase/functions/handle-checkout/index.ts"
@@ -18,54 +16,7 @@ function sourceBetween(start, end) {
   return source.slice(startIndex + start.length, endIndex)
 }
 
-function loadMoneyHelpers() {
-  const helperSource = sourceBetween(
-    "// OPS_2B2B_MONEY_HELPERS_START",
-    "// OPS_2B2B_MONEY_HELPERS_END"
-  )
-  const instrumented = `
-    const MAX_QUANTITY = 99
-    ${helperSource}
-    globalThis.__moneyHelpers = {
-      parsePriceToKobo,
-      parseFeePercentToBps,
-      calculateItemFinancialSnapshot,
-      koboToNairaDecimal,
-      isRepresentableNumeric12_2Kobo,
-      bigintToSafeNumber,
-    }
-  `
-  const compiled = ts.transpileModule(instrumented, {
-    compilerOptions: {
-      module: ts.ModuleKind.None,
-      target: ts.ScriptTarget.ES2022,
-    },
-  }).outputText
-  const context = {}
-  vm.runInNewContext(compiled, context, { filename: functionFile })
-  return context.__moneyHelpers
-}
-
-const helpers = loadMoneyHelpers()
-
-test("reads authoritative prices and vendor fees as exact server-side decimals", () => {
-  assert.match(
-    source,
-    /\.from\("products"\)\s*\.select\("id, vendor_id, price_text:price::text, stock, is_active"\)/
-  )
-  assert.match(
-    source,
-    /\.from\("vendors"\)\s*\.select\("id, is_active, platform_fee_pct_text:platform_fee_pct::text"\)/
-  )
-  assert.match(source, /parseFeePercentToBps\([\s\S]*platform_fee_pct_text/)
-  assert.doesNotMatch(
-    source,
-    /const\s+platformFee(?:Bps|Pct)\s*=\s*(?:500|1000)\b/
-  )
-  assert.doesNotMatch(source, /platform_fee_pct_text\s*\?\?/)
-})
-
-test("browser checkout contract cannot supply price, fee, or financial fields", () => {
+test("browser checkout cannot supply financial or vendor authority", () => {
   const checkoutFields = sourceBetween(
     "const CHECKOUT_FIELDS = new Set([",
     "])\nconst SHIPPING_FIELDS"
@@ -75,239 +26,114 @@ test("browser checkout contract cannot supply price, fee, or financial fields", 
     "])\nconst NIGERIAN_STATES"
   )
 
-  assert.match(checkoutFields, /"checkout_attempt_id"/)
-  assert.match(checkoutFields, /"shipping_address"/)
-  assert.match(checkoutFields, /"items"/)
-  assert.doesNotMatch(checkoutFields, /price|amount|currency|fee|vendor/i)
-  assert.match(itemFields, /"product_id"/)
-  assert.match(itemFields, /"quantity"/)
-  assert.doesNotMatch(itemFields, /price|amount|currency|fee|vendor/i)
-  assert.match(source, /Object\.keys\(value\)\.some\(\(field\) => !CHECKOUT_FIELDS\.has\(field\)\)/)
+  assert.match(checkoutFields, /"checkout_attempt_id"/u)
+  assert.match(checkoutFields, /"shipping_address"/u)
+  assert.match(checkoutFields, /"items"/u)
+  assert.doesNotMatch(checkoutFields, /price|amount|currency|fee|vendor/iu)
+  assert.match(itemFields, /"product_id"/u)
+  assert.match(itemFields, /"product_variant_id"/u)
+  assert.match(itemFields, /"quantity"/u)
+  assert.doesNotMatch(itemFields, /price|amount|currency|fee|vendor/iu)
 })
 
-test("price parser converts exact decimal strings to kobo", () => {
-  assert.equal(helpers.parsePriceToKobo("1"), 100n)
-  assert.equal(helpers.parsePriceToKobo("1.0"), 100n)
-  assert.equal(helpers.parsePriceToKobo("1.01"), 101n)
-  assert.equal(helpers.parsePriceToKobo("19999.99"), 1999999n)
-  assert.equal(helpers.koboToNairaDecimal(101n), "1.01")
-  assert.equal(helpers.koboToNairaDecimal(1999999n), "19999.99")
-})
-
-test("price parser rejects malformed, nonpositive, and inexact values", () => {
-  for (const value of [
-    1,
-    null,
-    "",
-    "0",
-    "0.00",
-    "-1.00",
-    "+1.00",
-    "01.00",
-    "1.001",
-    "1e2",
-    "NaN",
-    "Infinity",
-    " 1.00",
-    "1.00 ",
-  ]) {
-    assert.equal(helpers.parsePriceToKobo(value), null, String(value))
-  }
-  assert.doesNotMatch(source, /Number\(product\.price\)/)
-  assert.doesNotMatch(source, /Math\.round\(unitPrice\s*\*\s*100\)/)
-})
-
-test("fee parser converts exact percentages to basis points without fallback", () => {
-  assert.equal(helpers.parseFeePercentToBps("0"), 0n)
-  assert.equal(helpers.parseFeePercentToBps("4.25"), 425n)
-  assert.equal(helpers.parseFeePercentToBps("5.00"), 500n)
-  assert.equal(helpers.parseFeePercentToBps("10.00"), 1000n)
-  assert.equal(helpers.parseFeePercentToBps("100.00"), 10000n)
-
-  for (const value of [
-    null,
-    5,
-    "-1",
-    "100.01",
-    "4.251",
-    "5e0",
-    " 5.00",
-  ]) {
-    assert.equal(helpers.parseFeePercentToBps(value), null, String(value))
-  }
-})
-
-test("item snapshots use integer multiplication and deterministic half-up fees", () => {
-  const oneOhOne = helpers.calculateItemFinancialSnapshot(101n, 1, 500n)
-  assert.equal(oneOhOne.unit_amount_kobo, 101n)
-  assert.equal(oneOhOne.gross_amount_kobo, 101n)
-  assert.equal(oneOhOne.platform_fee_amount_kobo, 5n)
-  assert.equal(oneOhOne.vendor_net_amount_kobo, 96n)
-
-  const nineteenNinetyNine = helpers.calculateItemFinancialSnapshot(
-    1999n,
-    1,
-    425n
-  )
-  assert.equal(nineteenNinetyNine.gross_amount_kobo, 1999n)
-  assert.equal(nineteenNinetyNine.platform_fee_amount_kobo, 85n)
-  assert.equal(nineteenNinetyNine.vendor_net_amount_kobo, 1914n)
-
-  const quantity = helpers.calculateItemFinancialSnapshot(101n, 3, 500n)
-  assert.equal(quantity.gross_amount_kobo, 303n)
-  assert.equal(quantity.platform_fee_amount_kobo, 15n)
-  assert.equal(quantity.vendor_net_amount_kobo, 288n)
-
-  const halfUp = helpers.calculateItemFinancialSnapshot(1n, 1, 5000n)
-  assert.equal(halfUp.platform_fee_amount_kobo, 1n)
-})
-
-test("zero and full fee rates preserve gross equals fee plus vendor net", () => {
-  const zero = helpers.calculateItemFinancialSnapshot(12345n, 2, 0n)
-  assert.equal(zero.gross_amount_kobo, 24690n)
-  assert.equal(zero.platform_fee_amount_kobo, 0n)
-  assert.equal(zero.vendor_net_amount_kobo, 24690n)
-  assert.equal(
-    zero.gross_amount_kobo,
-    zero.platform_fee_amount_kobo + zero.vendor_net_amount_kobo
-  )
-
-  const full = helpers.calculateItemFinancialSnapshot(12345n, 2, 10000n)
-  assert.equal(full.platform_fee_amount_kobo, 24690n)
-  assert.equal(full.vendor_net_amount_kobo, 0n)
-  assert.equal(
-    full.gross_amount_kobo,
-    full.platform_fee_amount_kobo + full.vendor_net_amount_kobo
-  )
-})
-
-test("invalid arithmetic inputs and unsafe provider totals fail closed", () => {
-  assert.equal(helpers.calculateItemFinancialSnapshot(0n, 1, 500n), null)
-  assert.equal(helpers.calculateItemFinancialSnapshot(100n, 0, 500n), null)
-  assert.equal(helpers.calculateItemFinancialSnapshot(100n, 100, 500n), null)
-  assert.equal(helpers.calculateItemFinancialSnapshot(100n, 1, -1n), null)
-  assert.equal(helpers.calculateItemFinancialSnapshot(100n, 1, 10001n), null)
-  assert.equal(
-    helpers.bigintToSafeNumber(BigInt(Number.MAX_SAFE_INTEGER)),
-    Number.MAX_SAFE_INTEGER
-  )
-  assert.equal(
-    helpers.bigintToSafeNumber(BigInt(Number.MAX_SAFE_INTEGER) + 1n),
-    null
-  )
-  assert.match(source, /const paystackAmount = bigintToSafeNumber\(totalKobo\)/)
-  assert.match(source, /paystackAmount === null/)
-})
-
-test("numeric(12,2) storage range is enforced before order insertion", () => {
-  assert.equal(helpers.isRepresentableNumeric12_2Kobo(999999999999n), true)
-  assert.equal(helpers.isRepresentableNumeric12_2Kobo(1000000000000n), false)
-  assert.equal(helpers.isRepresentableNumeric12_2Kobo(0n), false)
-
+test("trusted RPC is the sole fresh construction and financial authority", () => {
   assert.match(
     source,
-    /const MAX_NUMERIC_12_2_KOBO = 999_999_999_999n/
+    /await supabase\.rpc\("construct_trusted_checkout_order", \{/u
   )
-  const rangeCheckIndex = source.indexOf(
-    "!isRepresentableNumeric12_2Kobo(totalKobo)"
-  )
-  const orderInsertIndex = source.indexOf('.from("orders")\n    .insert({')
-  assert.ok(rangeCheckIndex >= 0)
-  assert.ok(orderInsertIndex > rangeCheckIndex)
+  assert.doesNotMatch(source, /\.from\("products"\)/u)
+  assert.doesNotMatch(source, /\.from\("vendors"\)/u)
+  assert.doesNotMatch(source, /parsePriceToKobo|parseFeePercentToBps/u)
+  assert.doesNotMatch(source, /calculateItemFinancialSnapshot/u)
+  assert.doesNotMatch(source, /platform_fee_pct|platform_fee_bps/u)
 })
 
-test("order total is the exact sum of item gross amounts", () => {
-  assert.match(source, /let totalKobo = 0n/)
-  assert.match(source, /totalKobo \+= snapshot\.gross_amount_kobo/)
-  assert.match(source, /total_amount: koboToNairaDecimal\(totalKobo\)/)
-  assert.match(source, /total_amount_kobo: totalKobo\.toString\(\)/)
-})
-
-test("pending order insert writes the complete V2 order snapshot", () => {
-  const orderInsert = sourceBetween(
-    '.from("orders")\n    .insert({',
-    '    })\n    .select("id")'
-  )
-  assert.match(orderInsert, /status: "pending"/)
-  assert.match(orderInsert, /total_amount: koboToNairaDecimal\(totalKobo\)/)
-  assert.match(orderInsert, /total_amount_kobo: totalKobo\.toString\(\)/)
-  assert.match(orderInsert, /currency: "NGN"/)
-  assert.match(orderInsert, /financial_contract_version: 2/)
-  assert.doesNotMatch(orderInsert, /payment_finalized_at/)
-})
-
-test("order item insert writes every V2 financial snapshot field", () => {
-  const orderItems = sourceBetween(
-    "const orderItems = validatedItems.map((item) => ({",
-    "  }))\n  const { error: itemsError }"
-  )
-  for (const field of [
-    "unit_price",
-    "subtotal",
-    "unit_amount_kobo",
-    "gross_amount_kobo",
-    "platform_fee_bps",
-    "platform_fee_amount_kobo",
-    "vendor_net_amount_kobo",
-    "currency",
-    "financial_contract_version",
-  ]) {
-    assert.match(orderItems, new RegExp(`${field}:`), field)
+test("Edge function performs no direct checkout construction writes", () => {
+  for (const table of ["orders", "checkout_attempts", "order_items"]) {
+    assert.doesNotMatch(
+      source,
+      new RegExp(`\\.from\\("${table}"\\)\\s*\\.insert`, "u"),
+      table
+    )
   }
-  assert.match(orderItems, /unit_amount_kobo\.toString\(\)/)
-  assert.match(orderItems, /gross_amount_kobo\.toString\(\)/)
-  assert.match(orderItems, /platform_fee_amount_kobo\.toString\(\)/)
-  assert.match(orderItems, /vendor_net_amount_kobo\.toString\(\)/)
+  assert.doesNotMatch(source, /cleanupOrder/u)
+  assert.doesNotMatch(source, /\.delete\(\)/u)
 })
 
-test("Paystack initialization uses a safe number and explicit NGN currency", () => {
-  const paystackBody = sourceBetween(
-    "body: JSON.stringify({",
-    "        }),\n      }\n    )"
+test("RPC receives only trusted identity, customer, address, expiry, and item inputs", () => {
+  const rpcArguments = sourceBetween(
+    'await supabase.rpc("construct_trusted_checkout_order", {',
+    "    })\n\n  if (constructionError)"
   )
-  assert.match(paystackBody, /email: customerEmail/)
-  assert.match(paystackBody, /amount: paystackAmount/)
-  assert.match(paystackBody, /currency: "NGN"/)
-  assert.doesNotMatch(paystackBody, /amount: totalKobo/)
+  const expectedArguments = [
+    "p_checkout_attempt_id: checkoutAttemptId",
+    "p_customer_id: verifiedCustomerId",
+    "p_customer_email: customerEmail",
+    "p_customer_name: customerName",
+    "p_customer_phone: customerPhone",
+    "p_shipping_address: shippingAddress",
+    "p_request_fingerprint: requestFingerprint",
+    "p_expires_at: expiresAt",
+    "p_items: items",
+  ]
+  for (const argument of expectedArguments) {
+    assert.ok(rpcArguments.includes(argument), argument)
+  }
+  assert.doesNotMatch(rpcArguments, /price|amount|fee|vendor|stock/iu)
 })
 
-test("existing checkout attempts are resolved before fresh product and fee reads", () => {
-  const reuseIndex = source.indexOf(
+test("Paystack amount and order identity come only from a validated RPC row", () => {
+  const parseIndex = source.indexOf("parseTrustedConstructionResult(")
+  const orderIndex = source.indexOf("const orderId = construction.orderId", parseIndex)
+  const amountIndex = source.indexOf(
+    "const paystackAmount = construction.totalAmountKobo",
+    orderIndex
+  )
+  const paystackIndex = source.indexOf(
+    '"https://api.paystack.co/transaction/initialize"',
+    amountIndex
+  )
+  assert.ok(parseIndex >= 0)
+  assert.ok(orderIndex > parseIndex)
+  assert.ok(amountIndex > orderIndex)
+  assert.ok(paystackIndex > amountIndex)
+  assert.match(source, /amount: paystackAmount/u)
+  assert.doesNotMatch(source, /amount: totalKobo/u)
+})
+
+test("trusted total is constrained to the installed numeric contract", () => {
+  assert.match(source, /const MAX_TRUSTED_TOTAL_KOBO = 999_999_999_999n/u)
+  assert.match(
+    source,
+    /amount < 1n \|\| amount > MAX_TRUSTED_TOTAL_KOBO/u
+  )
+  assert.match(source, /Number\.isSafeInteger\(safeAmount\)/u)
+})
+
+test("reuse is checked before construction and RPC reuse never initializes payment", () => {
+  const firstReuse = source.indexOf(
     "const existingAttempt = await existingAttemptResponse("
   )
-  const reuseReturnIndex = source.indexOf(
-    "if (existingAttempt) return existingAttempt"
+  const rpc = source.indexOf(
+    'await supabase.rpc("construct_trusted_checkout_order", {'
   )
-  const productReadIndex = source.indexOf('.from("products")', reuseReturnIndex)
-  const vendorReadIndex = source.indexOf('.from("vendors")', productReadIndex)
-
-  assert.ok(reuseIndex >= 0)
-  assert.ok(reuseReturnIndex > reuseIndex)
-  assert.ok(productReadIndex > reuseReturnIndex)
-  assert.ok(vendorReadIndex > productReadIndex)
-  assert.doesNotMatch(
-    sourceBetween(
-      "async function createRequestFingerprint(",
-      "type CheckoutSupabaseClient"
-    ),
-    /price|amount|currency|fee|vendor_id|platform/i
+  const already = source.indexOf(
+    'if (construction.outcome === "already_constructed")'
   )
-})
-
-test("all products, vendors, prices, fees, and totals are validated before pending writes", () => {
-  const orderInsertIndex = source.indexOf('.from("orders")\n    .insert({')
-  for (const prerequisite of [
-    '.from("products")',
-    '.from("vendors")',
-    "parseFeePercentToBps(",
-    "parsePriceToKobo(",
-    "calculateItemFinancialSnapshot(",
-    "isRepresentableNumeric12_2Kobo(totalKobo)",
-    "bigintToSafeNumber(totalKobo)",
-  ]) {
-    const index = source.lastIndexOf(prerequisite, orderInsertIndex)
-    assert.ok(index >= 0 && index < orderInsertIndex, prerequisite)
-  }
+  const recovered = source.indexOf(
+    "const recoveredAttempt = await existingAttemptResponse(",
+    already
+  )
+  const paystack = source.indexOf(
+    '"https://api.paystack.co/transaction/initialize"'
+  )
+  assert.ok(firstReuse >= 0 && rpc > firstReuse)
+  assert.ok(already > rpc && recovered > already)
+  assert.ok(paystack > recovered)
+  assert.match(
+    source.slice(already, paystack),
+    /if \(recoveredAttempt\) return recoveredAttempt/u
+  )
 })
 
 test("checkout does not finalize payments, create ledgers, or mutate stock", () => {
@@ -321,31 +147,19 @@ test("checkout does not finalize payments, create ledgers, or mutate stock", () 
   }
   assert.equal(source.includes("finalize_paystack_paid_order"), false)
   assert.equal(source.includes("decrement_stock"), false)
-  assert.doesNotMatch(source, /\.update\(\{[^}]*stock/s)
-  assert.doesNotMatch(source, /status:\s*"(?:confirmed|fulfilled)"/)
+  assert.doesNotMatch(source, /\.update\(\{[^}]*stock/su)
+  assert.doesNotMatch(source, /status:\s*"(?:confirmed|fulfilled)"/u)
 })
 
-test("existing validation, cleanup, insertion order, and response contracts remain", () => {
-  assert.match(source, /const MAX_BODY_BYTES = 32 \* 1024/)
-  assert.match(source, /const MAX_ITEMS = 50/)
-  assert.match(source, /const MAX_QUANTITY = 99/)
-  assert.match(source, /await supabase\.auth\.getUser\(accessToken\)/)
-  assert.match(source, /\.from\("customer_profiles"\)/)
-  assert.match(source, /const cleanupOrder = async \(\) =>/)
-
-  const orderIndex = source.indexOf('.from("orders")\n    .insert({')
-  const attemptIndex = source.indexOf('.from("checkout_attempts")\n    .insert({', orderIndex)
-  const itemIndex = source.indexOf('.from("order_items")\n    .insert(orderItems)', attemptIndex)
-  const paystackIndex = source.indexOf(
-    'fetch(\n      "https://api.paystack.co/transaction/initialize"',
-    itemIndex
-  )
-  assert.ok(orderIndex >= 0)
-  assert.ok(attemptIndex > orderIndex)
-  assert.ok(itemIndex > attemptIndex)
-  assert.ok(paystackIndex > itemIndex)
+test("authentication, profile, provider response, and success contracts remain", () => {
+  assert.match(source, /const MAX_BODY_BYTES = 32 \* 1024/u)
+  assert.match(source, /const MAX_ITEMS = 50/u)
+  assert.match(source, /const MAX_QUANTITY = 99/u)
+  assert.match(source, /await supabase\.auth\.getUser\(accessToken\)/u)
+  assert.match(source, /\.from\("customer_profiles"\)/u)
+  assert.match(source, /validAuthorizationUrl\(authorizationUrl\)/u)
   assert.match(
     source,
-    /order_id: orderId,[\s\S]*reference,[\s\S]*authorization_url: authorizationUrl/
+    /order_id: orderId,[\s\S]*reference,[\s\S]*authorization_url: authorizationUrl/u
   )
 })

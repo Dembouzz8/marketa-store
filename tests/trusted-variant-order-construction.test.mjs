@@ -601,11 +601,15 @@ test("failed construction is naturally atomic and leaves no reusable authorizati
   assert.doesNotMatch(normalized, /exception\s+when others[\s\S]*?return query/iu)
 })
 
-test("current ordinary Edge checkout remains source-identical and does not call D2 RPC", () => {
-  assert.match(checkout, /const ITEM_FIELDS = new Set\(\["product_id", "quantity"\]\)/u)
-  assert.match(checkout, /\.from\("orders"\)\n    \.insert/u)
-  assert.match(checkout, /\.from\("order_items"\)\n    \.insert/u)
-  assert.doesNotMatch(checkout, /construct_trusted_checkout_order/u)
+test("D4 Edge checkout uses the D2 RPC without direct construction writes", () => {
+  assert.match(checkout, /"product_variant_id"/u)
+  assert.match(
+    checkout,
+    /await supabase\.rpc\("construct_trusted_checkout_order", \{/u
+  )
+  assert.doesNotMatch(checkout, /\.from\("orders"\)\n    \.insert/u)
+  assert.doesNotMatch(checkout, /\.from\("checkout_attempts"\)\n    \.insert/u)
+  assert.doesNotMatch(checkout, /\.from\("order_items"\)\n    \.insert/u)
 })
 
 test("migration adds no publication, payment, outbox, ledger, or public mutation behavior", () => {

@@ -14,6 +14,8 @@ const finalizerFile =
   "supabase/migrations/20261007135410_add_atomic_paid_order_stock_finalization.sql"
 const checkoutAttemptFoundationFile =
   "supabase/migrations/20260726150000_add_checkout_attempt_idempotency_foundation.sql"
+const trustedConstructionFile =
+  "supabase/migrations/20261105084924_add_trusted_variant_order_construction.sql"
 const activationAuthorityFile =
   "supabase/migrations/20260926231820_add_vendor_activation_authority.sql"
 
@@ -23,6 +25,7 @@ const foundation = read(foundationFile)
 const checkout = read(checkoutFile)
 const finalizer = read(finalizerFile)
 const checkoutAttemptFoundation = read(checkoutAttemptFoundationFile)
+const trustedConstruction = read(trustedConstructionFile)
 const activationAuthority = read(activationAuthorityFile)
 
 function between(source, start, end) {
@@ -393,18 +396,55 @@ test("any order-item linkage blocks conversion without status guessing", () => {
   }
 })
 
-test("checkout sequencing covers every payable state through order items", () => {
-  const orderInsert = checkout.indexOf('.from("orders")\n    .insert({')
-  const attemptInsert = checkout.indexOf('.from("checkout_attempts")\n    .insert({')
-  const itemInsert = checkout.indexOf('.from("order_items")\n    .insert(orderItems)')
+test("trusted checkout sequencing covers every payable state through order items", () => {
+  const validation = checkout.indexOf("const validation = validateCheckout(requestBody)")
+  const authentication = checkout.indexOf(
+    "await supabase.auth.getUser(accessToken)"
+  )
+  const profile = checkout.indexOf('.from("customer_profiles")')
+  const fingerprint = checkout.indexOf(
+    "const requestFingerprint = await createRequestFingerprint("
+  )
+  const construction = checkout.indexOf(
+    'await supabase.rpc("construct_trusted_checkout_order", {'
+  )
+  const resultValidation = checkout.indexOf(
+    "const construction = parseTrustedConstructionResult(",
+    construction
+  )
+  const alreadyConstructed = checkout.indexOf(
+    'if (construction.outcome === "already_constructed")',
+    resultValidation
+  )
+  const constructedOrder = checkout.indexOf(
+    "const orderId = construction.orderId",
+    alreadyConstructed
+  )
   const paystackInitialize = checkout.indexOf(
     'fetch(\n      "https://api.paystack.co/transaction/initialize"'
   )
 
-  assert.notEqual(orderInsert, -1)
-  assert.ok(attemptInsert > orderInsert)
-  assert.ok(itemInsert > attemptInsert)
-  assert.ok(paystackInitialize > itemInsert)
+  assert.ok(validation >= 0)
+  assert.ok(authentication > validation)
+  assert.ok(profile > authentication)
+  assert.ok(fingerprint > profile)
+  assert.ok(construction > fingerprint)
+  assert.ok(resultValidation > construction)
+  assert.ok(alreadyConstructed > resultValidation)
+  assert.ok(constructedOrder > alreadyConstructed)
+  assert.ok(paystackInitialize > constructedOrder)
+  assert.match(
+    between(
+      checkout,
+      'await supabase.rpc("construct_trusted_checkout_order", {',
+      "if (constructionError)"
+    ),
+    /p_customer_id: verifiedCustomerId[\s\S]*p_request_fingerprint: requestFingerprint[\s\S]*p_items: items/
+  )
+  assert.doesNotMatch(
+    checkout,
+    /\.from\("(?:orders|checkout_attempts|order_items)"\)\s*\.insert/
+  )
   assert.match(
     checkoutAttemptFoundation,
     /checkout_attempts_order_checkout_attempt_fkey[\s\S]*references public\.orders \(id, checkout_attempt_id\)[\s\S]*on delete cascade/
@@ -424,28 +464,40 @@ test("checkout sequencing covers every payable state through order items", () =>
   assert.match(finalizer, /from public\.order_items as item\s+where item\.order_id = v_order\.id/)
 })
 
-test("the transient pre-item checkout window is synchronized and cannot become payable", () => {
-  // An order and checkout_attempt can exist briefly before order_items. The
-  // conversion query cannot see that state directly. The exclusive conversion
-  // lock and shared order-item trigger lock decide which path wins: either the
-  // item exists before conversion validates, or the later item insert rejects
-  // the converted product before Paystack initialization.
+test("trusted construction removes the Edge pre-item window without weakening synchronization", () => {
+  const currentOrderItemGuard = between(
+    trustedConstruction,
+    "create or replace function public.guard_foundation_order_item_variant()",
+    "create function public.construct_trusted_checkout_order("
+  )
+  const constructor = between(
+    trustedConstruction,
+    "create function public.construct_trusted_checkout_order(",
+    "alter function public.construct_trusted_checkout_order("
+  )
+  const orderInsert = constructor.indexOf("insert into public.orders (")
+  const attemptInsert = constructor.indexOf(
+    "insert into public.checkout_attempts ("
+  )
+  const itemInsert = constructor.indexOf("insert into public.order_items (")
+  const constructedReturn = constructor.indexOf(
+    "'constructed'::text",
+    itemInsert
+  )
+
   assert.match(configure, /pg_catalog\.pg_advisory_xact_lock\(/)
-  assert.match(orderItemGuard, /pg_catalog\.pg_advisory_xact_lock_shared\(/)
-  assert.match(orderItemGuard, /parent_mode is distinct from 'none'/)
+  assert.match(currentOrderItemGuard, /pg_catalog\.pg_advisory_xact_lock_shared\(/)
+  assert.match(currentOrderItemGuard, /parent_mode is distinct from 'none'/)
+  assert.match(constructor, /pg_catalog\.pg_advisory_xact_lock_shared\(/)
+  assert.ok(orderInsert >= 0)
+  assert.ok(attemptInsert > orderInsert)
+  assert.ok(itemInsert > attemptInsert)
+  assert.ok(constructedReturn > itemInsert)
+  assert.doesNotMatch(constructor, /exception\s+when others/iu)
+  assert.doesNotMatch(checkout, /cleanupOrder|\.delete\(\)/u)
   assert.ok(
-    checkout.indexOf('.insert(orderItems)') <
-      checkout.indexOf('https://api.paystack.co/transaction/initialize')
-  )
-  const itemFailure = between(
-    checkout,
-    "if (itemsError) {",
-    "const callbackUrl = new URL"
-  )
-  assert.match(itemFailure, /await cleanupOrder\(\)/)
-  assert.match(
-    checkout,
-    /\.from\("orders"\)\s+\.delete\(\)\s+\.eq\("id", orderId\)/
+    checkout.indexOf("const orderId = construction.orderId") <
+      checkout.indexOf("https://api.paystack.co/transaction/initialize")
   )
 })
 
@@ -548,15 +600,38 @@ test("parent stock stays zero for every variant management operation", () => {
   assert.match(foundation, /check \(variant_mode = 'none' or stock = 0\)/)
 })
 
-test("ordinary product checkout behavior remains source-compatible", () => {
-  assert.match(
-    checkout,
-    /\.select\("id, vendor_id, price_text:price::text, stock, is_active"\)/
+test("ordinary checkout remains protected by the trusted construction boundary", () => {
+  const constructor = between(
+    trustedConstruction,
+    "create function public.construct_trusted_checkout_order(",
+    "alter function public.construct_trusted_checkout_order("
   )
-  assert.match(checkout, /product\.is_active !== true/)
-  assert.match(checkout, /stock < cartItem\.quantity/)
-  assert.match(checkout, /\.from\("order_items"\)\s*\.insert\(orderItems\)/)
-  assert.doesNotMatch(checkout, /product_variant_id|variant_size_snapshot|variant_colour_snapshot/)
+  const validation = between(
+    checkout,
+    "function validateCheckout(value: unknown)",
+    "async function readBoundedBody"
+  )
+  const variantGate = between(
+    checkout,
+    "function variantCheckoutAllowed(items: ValidatedItem[])",
+    "function parseTrustedTotalKobo"
+  )
+
+  assert.match(validation, /Object\.keys\(item\)\.some\(\(field\) => !ITEM_FIELDS\.has\(field\)\)/)
+  assert.match(validation, /product_id: productId,[\s\S]*quantity: item\.quantity/)
+  assert.match(variantGate, /VARIANT_CHECKOUT_ENABLED/)
+  assert.match(checkout, /const VARIANT_CHECKOUT_ENABLED = false/)
+  assert.match(constructor, /product_record\.is_active is distinct from true/)
+  assert.match(constructor, /product_record\.variant_mode is distinct from 'none'/)
+  assert.match(constructor, /product_record\.stock < item_record\.quantity/)
+  assert.match(constructor, /product_record\.price \* 100/)
+  assert.match(constructor, /product_record\.platform_fee_pct \* 100/)
+  assert.doesNotMatch(checkout, /\.from\("products"\)|\.from\("vendors"\)/)
+  assert.doesNotMatch(
+    checkout,
+    /\.from\("(?:orders|checkout_attempts|order_items)"\)\s*\.insert/
+  )
+  assert.doesNotMatch(checkout, /finalize_paystack_paid_order|decrement_stock/)
   assert.doesNotMatch(migration, /create or replace function public\.finalize_paystack_paid_order/)
   assert.doesNotMatch(migration, /create or replace function public\.decrement_stock/)
 })

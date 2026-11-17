@@ -10,8 +10,19 @@ import {
 } from "lucide-react"
 import { redirect } from "next/navigation"
 
+import {
+  formatNairaFromKobo,
+  presentOrderItemSnapshot,
+  resolveStoredOrderTotalKobo,
+  type VariantOptionPresentation,
+} from "@/lib/order-item-snapshot"
+import {
+  getCustomerOrderHistory,
+  type CustomerOrder,
+  type CustomerOrderItem,
+} from "@/lib/order-data-server"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
-import { cn, formatNaira, getProductImage } from "@/lib/utils"
+import { cn, getProductImage } from "@/lib/utils"
 
 const PAGE_SIZE = 20
 const MAX_SAFE_PAGE = Math.floor(Number.MAX_SAFE_INTEGER / PAGE_SIZE)
@@ -22,20 +33,8 @@ const orderDateFormatter = new Intl.DateTimeFormat("en-NG", {
   timeZone: "Africa/Lagos",
 })
 
-type OrderItemRow = {
-  id: string
-  product_id: string | null
-  vendor_id: string
-  quantity: number
-}
-
-type CustomerOrderRow = {
-  id: string
-  status: string
-  total_amount: number | string
-  created_at: string | null
-  order_items: OrderItemRow[] | null
-}
+type OrderItemRow = CustomerOrderItem
+type CustomerOrderRow = CustomerOrder
 
 type ProductPreview = {
   id: string
@@ -83,26 +82,49 @@ function formatOrderDate(value: string | null) {
     : orderDateFormatter.format(date)
 }
 
-function formatOrderTotal(value: number | string) {
-  const amount = Number(value)
-  return Number.isFinite(amount) ? formatNaira(amount) : "Total unavailable"
-}
-
-function getPreviewProductId(order: CustomerOrderRow) {
-  return order.order_items?.find((item) => item.product_id)?.product_id ?? null
-}
-
 function getItemQuantity(order: CustomerOrderRow) {
   return (order.order_items ?? []).reduce((total, item) => {
-    const quantity = Number(item.quantity)
-    return Number.isSafeInteger(quantity) && quantity > 0
-      ? total + quantity
-      : total
+    const quantity = presentOrderItemSnapshot(item).quantity
+    return quantity === null ? total : total + quantity
   }, 0)
 }
 
 function pageHref(page: number) {
   return page === 1 ? "/account/orders" : `/account/orders?page=${page}`
+}
+
+function formatOptionValue(option: VariantOptionPresentation) {
+  const metadata: string[] = []
+  if (option.numericValue && option.unitSymbol) {
+    metadata.push(`${option.numericValue} ${option.unitSymbol}`)
+  }
+  if (option.unitName) metadata.push(option.unitName)
+  if (option.sizeSystemName) metadata.push(option.sizeSystemName)
+
+  return metadata.length > 0
+    ? `${option.valueLabel} (${metadata.join(", ")})`
+    : option.valueLabel
+}
+
+function VariantDetails({ item }: { item: OrderItemRow }) {
+  const variant = presentOrderItemSnapshot(item).variant
+  if (variant.kind === "ordinary") return null
+  if (variant.kind === "unavailable") {
+    return <p className="mt-1 text-xs text-zinc-500">{variant.fallback}</p>
+  }
+
+  return (
+    <dl className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+      {variant.options.map((option) => (
+        <div key={`${option.axisPosition}-${option.axisLabel}`} className="flex gap-1">
+          <dt>{option.axisLabel}:</dt>
+          <dd className="font-medium text-zinc-700">
+            {formatOptionValue(option)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
 }
 
 export default async function CustomerOrdersPage({
@@ -112,62 +134,37 @@ export default async function CustomerOrdersPage({
 }) {
   const resolvedSearchParams = await searchParams
   const page = parsePage(resolvedSearchParams.page)
-  const offset = (page - 1) * PAGE_SIZE
-  const supabase = await createSupabaseServerClient()
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser()
-
-  if (userError || !user) redirect("/account/login")
-
-  const { data, error, count } = await supabase
-    .from("orders")
-    .select(
-      `
-      id,
-      status,
-      total_amount,
-      created_at,
-      order_items (
-        id,
-        product_id,
-        vendor_id,
-        quantity
-      )
-      `,
-      { count: "exact" }
-    )
-    .eq("customer_id", user.id)
-    .order("created_at", { ascending: false })
-    .range(offset, offset + PAGE_SIZE - 1)
-
-  if (error) {
+  const orderResult = await getCustomerOrderHistory({
+    page,
+    pageSize: PAGE_SIZE,
+  })
+  if (!orderResult.ok) {
+    if (orderResult.code === "AUTH_REQUIRED") redirect("/account/login")
     return <OrdersQueryError />
   }
 
-  const orders = (data ?? []) as CustomerOrderRow[]
-  const totalOrders = count ?? orders.length
+  const { orders, totalOrders } = orderResult.data
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE))
 
-  if (page > totalPages) {
-    redirect(pageHref(totalPages))
-  }
+  if (page > totalPages) redirect(pageHref(totalPages))
 
-  const previewProductIds = [
+  const productIds = [
     ...new Set(
-      orders
-        .map(getPreviewProductId)
-        .filter((id): id is string => typeof id === "string")
+      orders.flatMap((order) =>
+        (order.order_items ?? [])
+          .map((item) => item.product_id)
+          .filter((id): id is string => typeof id === "string")
+      )
     ),
   ]
   const productPreviews = new Map<string, ProductPreview>()
 
-  if (previewProductIds.length > 0) {
+  if (productIds.length > 0) {
+    const supabase = await createSupabaseServerClient()
     const { data: products, error: productError } = await supabase
       .from("products")
       .select("id, name, images")
-      .in("id", previewProductIds)
+      .in("id", productIds)
       .eq("is_active", true)
 
     if (!productError) {
@@ -208,12 +205,11 @@ export default async function CustomerOrdersPage({
           <>
             <div className="mt-8 space-y-4">
               {orders.map((order) => {
-                const previewId = getPreviewProductId(order)
-                const preview = previewId
-                  ? productPreviews.get(previewId)
-                  : undefined
                 const itemQuantity = getItemQuantity(order)
                 const status = getStatusPresentation(order.status)
+                const total = formatNairaFromKobo(
+                  resolveStoredOrderTotalKobo(order)
+                )
 
                 return (
                   <article
@@ -239,33 +235,61 @@ export default async function CustomerOrdersPage({
                       </span>
                     </div>
 
-                    <div className="mt-5 flex items-center gap-4 border-t border-zinc-100 pt-5">
-                      {preview ? (
-                        <Image
-                          src={getProductImage(preview.images ?? [])}
-                          alt={`${preview.name} product preview`}
-                          width={72}
-                          height={72}
-                          className="size-16 shrink-0 rounded-xl border border-zinc-100 object-cover sm:size-[72px]"
-                        />
-                      ) : (
-                        <span className="flex size-16 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 text-zinc-400 sm:size-[72px]">
-                          <PackageOpen className="size-7" aria-hidden="true" />
-                        </span>
-                      )}
+                    <div className="mt-5 space-y-4 border-t border-zinc-100 pt-5">
+                      {(order.order_items ?? []).map((item) => {
+                        const product = item.product_id
+                          ? productPreviews.get(item.product_id)
+                          : undefined
+                        const financial = presentOrderItemSnapshot(item).financial
+                        const unit = formatNairaFromKobo(
+                          financial.unitAmountKobo
+                        )
+                        const gross = formatNairaFromKobo(
+                          financial.grossAmountKobo
+                        )
 
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-1 font-semibold text-zinc-900">
-                          {preview?.name ?? "Product unavailable"}
-                        </p>
-                        <p className="mt-1 flex items-center gap-1.5 text-sm text-zinc-500">
-                          <ShoppingBag className="size-4" aria-hidden="true" />
-                          {itemQuantity} {itemQuantity === 1 ? "item" : "items"}
-                        </p>
-                      </div>
+                        return (
+                          <div key={item.id} className="flex items-start gap-3">
+                            {product ? (
+                              <Image
+                                src={getProductImage(product.images ?? [])}
+                                alt={`${product.name} product preview`}
+                                width={48}
+                                height={48}
+                                className="size-12 shrink-0 rounded-lg border border-zinc-100 object-cover"
+                              />
+                            ) : (
+                              <span className="flex size-12 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-100 text-zinc-400">
+                                <PackageOpen className="size-5" aria-hidden="true" />
+                              </span>
+                            )}
 
-                      <p className="shrink-0 text-right text-lg font-bold text-amber-600">
-                        {formatOrderTotal(order.total_amount)}
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-1 text-sm font-semibold text-zinc-900">
+                                {product?.name ?? "Historical product unavailable"}
+                              </p>
+                              <VariantDetails item={item} />
+                              <p className="mt-1 text-xs text-zinc-500">
+                                Qty {item.quantity}
+                                {unit ? ` × ${unit}` : " · Unit amount unavailable"}
+                              </p>
+                            </div>
+
+                            <p className="shrink-0 text-sm font-semibold text-zinc-900">
+                              {gross ?? "Amount unavailable"}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div className="mt-5 flex items-center justify-between border-t border-zinc-100 pt-5">
+                      <p className="flex items-center gap-1.5 text-sm text-zinc-500">
+                        <ShoppingBag className="size-4" aria-hidden="true" />
+                        {itemQuantity} {itemQuantity === 1 ? "item" : "items"}
+                      </p>
+                      <p className="text-right text-lg font-bold text-amber-600">
+                        {total ?? "Total unavailable"}
                       </p>
                     </div>
                   </article>

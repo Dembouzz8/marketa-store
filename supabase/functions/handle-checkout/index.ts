@@ -8,6 +8,9 @@ const MAX_BODY_BYTES = 32 * 1024
 const MAX_ITEMS = 50
 const MAX_QUANTITY = 99
 const CHECKOUT_REUSE_WINDOW_MS = 30 * 60 * 1000
+// Variant identities are accepted by the contract for the later D5 cutover,
+// but purchasing remains deliberately disabled in this D4 batch.
+const VARIANT_CHECKOUT_ENABLED = false
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -18,7 +21,11 @@ const CHECKOUT_FIELDS = new Set([
   "items",
 ])
 const SHIPPING_FIELDS = new Set(["address", "city", "state"])
-const ITEM_FIELDS = new Set(["product_id", "quantity"])
+const ITEM_FIELDS = new Set([
+  "product_id",
+  "product_variant_id",
+  "quantity",
+])
 const NIGERIAN_STATES = new Set([
   "Abia",
   "Adamawa",
@@ -90,6 +97,7 @@ type CheckoutErrorCode =
 
 type ValidatedItem = {
   product_id: string
+  product_variant_id?: string
   quantity: number
 }
 
@@ -108,17 +116,6 @@ type TrustedCustomer = {
   email: string
   name: string
   phone: string
-}
-
-type ItemFinancialSnapshot = {
-  product_id: string
-  vendor_id: string
-  quantity: number
-  unit_amount_kobo: bigint
-  gross_amount_kobo: bigint
-  platform_fee_bps: bigint
-  platform_fee_amount_kobo: bigint
-  vendor_net_amount_kobo: bigint
 }
 
 type ValidationResult =
@@ -186,99 +183,187 @@ function hasLengthBetween(value: string, minimum: number, maximum: number) {
   return value.length >= minimum && value.length <= maximum
 }
 
-// OPS_2B2B_MONEY_HELPERS_START
-const EXACT_DECIMAL_PATTERN = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?$/
-const BASIS_POINTS_DENOMINATOR = 10000n
-const HALF_BASIS_POINT_DENOMINATOR = BASIS_POINTS_DENOMINATOR / 2n
-const MAX_NUMERIC_12_2_KOBO = 999_999_999_999n
-const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
+// D4_TRUSTED_CHECKOUT_CONTRACT_START
+const MAX_TRUSTED_TOTAL_KOBO = 999_999_999_999n
 
-function parseScaledDecimal(value: unknown, allowZero: boolean): bigint | null {
-  if (typeof value !== "string") return null
+type TrustedConstruction = {
+  outcome: "constructed" | "already_constructed"
+  orderId: string
+  totalAmountKobo: number
+  itemCount: number
+}
 
-  const match = EXACT_DECIMAL_PATTERN.exec(value)
-  if (!match) return null
+type TrustedConstructionFailure = {
+  code: CheckoutErrorCode
+  message: string
+  status: number
+  retryAfterMs?: number
+}
 
+function compareCheckoutItems(left: ValidatedItem, right: ValidatedItem) {
+  const productOrder = left.product_id.localeCompare(right.product_id)
+  if (productOrder !== 0) return productOrder
+
+  const leftVariant = left.product_variant_id ?? ""
+  const rightVariant = right.product_variant_id ?? ""
+  return leftVariant.localeCompare(rightVariant)
+}
+
+function variantCheckoutAllowed(items: ValidatedItem[]): boolean {
+  return (
+    VARIANT_CHECKOUT_ENABLED ||
+    items.every((item) => item.product_variant_id === undefined)
+  )
+}
+
+function parseTrustedTotalKobo(value: unknown): number | null {
+  let amount: bigint
   try {
-    const whole = BigInt(match[1])
-    const fractional = BigInt((match[2] ?? "").padEnd(2, "0"))
-    const scaled = whole * 100n + fractional
-    return scaled > 0n || (allowZero && scaled === 0n) ? scaled : null
+    if (typeof value === "number") {
+      if (!Number.isSafeInteger(value)) return null
+      amount = BigInt(value)
+    } else if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+      amount = BigInt(value)
+    } else {
+      return null
+    }
   } catch {
     return null
   }
+
+  if (amount < 1n || amount > MAX_TRUSTED_TOTAL_KOBO) return null
+  const safeAmount = Number(amount)
+  return Number.isSafeInteger(safeAmount) ? safeAmount : null
 }
 
-function parsePriceToKobo(value: unknown): bigint | null {
-  return parseScaledDecimal(value, false)
-}
+function parseTrustedConstructionResult(
+  value: unknown,
+  expectedItemCount: number
+): TrustedConstruction | null {
+  if (!Array.isArray(value) || value.length !== 1) return null
 
-function parseFeePercentToBps(value: unknown): bigint | null {
-  const basisPoints = parseScaledDecimal(value, true)
-  return basisPoints !== null && basisPoints <= BASIS_POINTS_DENOMINATOR
-    ? basisPoints
-    : null
-}
+  const row = value[0]
+  if (!isPlainObject(row)) return null
 
-function calculateItemFinancialSnapshot(
-  unitAmountKobo: bigint,
-  quantity: number,
-  platformFeeBps: bigint
-): Omit<ItemFinancialSnapshot, "product_id" | "vendor_id"> | null {
+  const outcome = row.construction_outcome
+  const orderId = row.constructed_order_id
+  const totalAmountKobo = parseTrustedTotalKobo(
+    row.constructed_total_amount_kobo
+  )
+  const itemCount = row.constructed_item_count
+
   if (
-    unitAmountKobo <= 0n ||
-    !Number.isInteger(quantity) ||
-    quantity < 1 ||
-    quantity > MAX_QUANTITY ||
-    platformFeeBps < 0n ||
-    platformFeeBps > BASIS_POINTS_DENOMINATOR
+    (outcome !== "constructed" && outcome !== "already_constructed") ||
+    typeof orderId !== "string" ||
+    orderId !== orderId.toLowerCase() ||
+    !UUID_PATTERN.test(orderId) ||
+    totalAmountKobo === null ||
+    typeof itemCount !== "number" ||
+    !Number.isInteger(itemCount) ||
+    itemCount < 1 ||
+    itemCount > MAX_ITEMS ||
+    itemCount !== expectedItemCount
   ) {
     return null
   }
 
-  const grossAmountKobo = unitAmountKobo * BigInt(quantity)
-  const platformFeeAmountKobo =
-    (grossAmountKobo * platformFeeBps + HALF_BASIS_POINT_DENOMINATOR) /
-    BASIS_POINTS_DENOMINATOR
-  const vendorNetAmountKobo = grossAmountKobo - platformFeeAmountKobo
+  return { outcome, orderId, totalAmountKobo, itemCount }
+}
 
+function classifyTrustedConstructionError(
+  value: unknown
+): TrustedConstructionFailure {
+  const code =
+    isPlainObject(value) && typeof value.code === "string" ? value.code : ""
+  const message =
+    isPlainObject(value) && typeof value.message === "string"
+      ? value.message
+      : ""
+
+  if (code === "23505") {
+    return {
+      code: "CHECKOUT_ATTEMPT_CONFLICT",
+      message: "This checkout attempt no longer matches your current details.",
+      status: 409,
+    }
+  }
+  if (code === "23514" && message === "Checkout attempt has expired.") {
+    return {
+      code: "CHECKOUT_EXPIRED",
+      message: "This checkout session has expired.",
+      status: 409,
+    }
+  }
   if (
-    grossAmountKobo <= 0n ||
-    platformFeeAmountKobo < 0n ||
-    platformFeeAmountKobo > grossAmountKobo ||
-    vendorNetAmountKobo < 0n ||
-    grossAmountKobo !== platformFeeAmountKobo + vendorNetAmountKobo
+    code === "23514" &&
+    message === "Checkout attempt requires reconciliation."
   ) {
-    return null
+    return {
+      code: "CHECKOUT_INITIALIZING",
+      message: "Checkout is still being prepared.",
+      status: 409,
+      retryAfterMs: 2000,
+    }
+  }
+  if (code === "23514" && message === "A checkout vendor is unavailable.") {
+    return {
+      code: "VENDOR_UNAVAILABLE",
+      message: "One or more sellers are currently unavailable.",
+      status: 409,
+    }
+  }
+  if (
+    code === "23514" &&
+    (message === "Ordinary checkout inventory is unavailable." ||
+      message === "Variant checkout inventory is unavailable.")
+  ) {
+    return {
+      code: "INSUFFICIENT_STOCK",
+      message: "One or more products no longer have enough stock.",
+      status: 409,
+    }
+  }
+  if (
+    code === "23514" &&
+    (message === "A checkout product is unavailable." ||
+      message === "A checkout variant is unavailable." ||
+      message === "Variant checkout requires a variant product." ||
+      message === "Legacy size variant identity is invalid." ||
+      message === "Legacy colour variant identity is invalid." ||
+      message === "Legacy size-colour variant identity is invalid." ||
+      message === "Generalized variant identity is incomplete." ||
+      message === "Generalized variant snapshot is invalid." ||
+      message === "Product variant mode is unsupported.")
+  ) {
+    return {
+      code: "PRODUCT_UNAVAILABLE",
+      message: "One or more products are no longer available.",
+      status: 409,
+    }
+  }
+  if (code === "22003") {
+    return {
+      code: "INVALID_PRODUCT_PRICE",
+      message: "The order total cannot currently be processed.",
+      status: 422,
+    }
+  }
+  if (code === "22023") {
+    return {
+      code: "INVALID_ITEMS",
+      message: "Review the products and quantities in your cart.",
+      status: 400,
+    }
   }
 
   return {
-    quantity,
-    unit_amount_kobo: unitAmountKobo,
-    gross_amount_kobo: grossAmountKobo,
-    platform_fee_bps: platformFeeBps,
-    platform_fee_amount_kobo: platformFeeAmountKobo,
-    vendor_net_amount_kobo: vendorNetAmountKobo,
+    code: "SERVICE_UNAVAILABLE",
+    message: "Checkout is temporarily unavailable. Please try again.",
+    status: 503,
+    retryAfterMs: 2000,
   }
 }
-
-function koboToNairaDecimal(value: bigint): string {
-  const whole = value / 100n
-  const fractional = (value % 100n).toString().padStart(2, "0")
-  return `${whole}.${fractional}`
-}
-
-function isRepresentableNumeric12_2Kobo(value: bigint): boolean {
-  return value > 0n && value <= MAX_NUMERIC_12_2_KOBO
-}
-
-function bigintToSafeNumber(value: bigint): number | null {
-  if (value < 0n || value > MAX_SAFE_INTEGER_BIGINT) return null
-
-  const numberValue = Number(value)
-  return Number.isSafeInteger(numberValue) ? numberValue : null
-}
-// OPS_2B2B_MONEY_HELPERS_END
+// D4_TRUSTED_CHECKOUT_CONTRACT_END
 
 function parseBearerToken(req: Request): string | null {
   const authorization = req.headers.get("authorization")
@@ -389,14 +474,20 @@ function validateCheckout(value: unknown): ValidationResult {
   }
 
   const items: ValidatedItem[] = []
-  const productIds = new Set<string>()
+  const lineIdentities = new Set<string>()
 
   for (const item of value.items) {
+    const hasVariantIdentity =
+      isPlainObject(item) &&
+      Object.prototype.hasOwnProperty.call(item, "product_variant_id")
     if (
       !isPlainObject(item) ||
       Object.keys(item).some((field) => !ITEM_FIELDS.has(field)) ||
       typeof item.product_id !== "string" ||
       !UUID_PATTERN.test(item.product_id) ||
+      (hasVariantIdentity &&
+        (typeof item.product_variant_id !== "string" ||
+          !UUID_PATTERN.test(item.product_variant_id))) ||
       typeof item.quantity !== "number" ||
       !Number.isInteger(item.quantity) ||
       item.quantity < 1 ||
@@ -411,20 +502,32 @@ function validateCheckout(value: unknown): ValidationResult {
     }
 
     const productId = item.product_id.toLowerCase()
-    if (productIds.has(productId)) {
+    const productVariantId = hasVariantIdentity
+      ? (item.product_variant_id as string).toLowerCase()
+      : undefined
+    const lineIdentity = `${productId}:${productVariantId ?? "ordinary"}`
+    if (lineIdentities.has(lineIdentity)) {
       return {
         ok: false,
         code: "DUPLICATE_PRODUCT",
-        message: "Each product may appear only once in the cart.",
+        message: "Each cart item may appear only once.",
         status: 400,
       }
     }
 
-    productIds.add(productId)
-    items.push({
-      product_id: productId,
-      quantity: item.quantity,
-    })
+    lineIdentities.add(lineIdentity)
+    items.push(
+      productVariantId
+        ? {
+            product_id: productId,
+            product_variant_id: productVariantId,
+            quantity: item.quantity,
+          }
+        : {
+            product_id: productId,
+            quantity: item.quantity,
+          }
+    )
   }
 
   return {
@@ -432,7 +535,7 @@ function validateCheckout(value: unknown): ValidationResult {
     value: {
       checkout_attempt_id: checkoutAttemptId,
       shipping_address: { address, city, state },
-      items,
+      items: items.sort(compareCheckoutItems),
     },
   }
 }
@@ -523,9 +626,7 @@ async function createRequestFingerprint(
       city: checkout.shipping_address.city,
       state: checkout.shipping_address.state,
     },
-    items: [...checkout.items].sort((left, right) =>
-      left.product_id.localeCompare(right.product_id)
-    ),
+    items: [...checkout.items].sort(compareCheckoutItems),
   })
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -783,6 +884,14 @@ async function handleCheckout(req: Request): Promise<Response> {
     items,
   } = validation.value
 
+  if (!variantCheckoutAllowed(items)) {
+    return errorResponse(
+      "INVALID_ITEMS",
+      "Variant checkout is not available yet.",
+      400
+    )
+  }
+
   const accessToken = parseBearerToken(req)
   if (!accessToken) {
     return errorResponse(
@@ -929,223 +1038,42 @@ async function handleCheckout(req: Request): Promise<Response> {
   )
   if (existingAttempt) return existingAttempt
 
-  const productIds = items.map((item) => item.product_id)
-  const { data: products, error: productsError } = await supabase
-    .from("products")
-    .select("id, vendor_id, price_text:price::text, stock, is_active")
-    .in("id", productIds)
-
-  if (productsError || !products) {
-    logOperationFailure("fetch_products", "SERVICE_UNAVAILABLE")
-    return errorResponse(
-      "SERVICE_UNAVAILABLE",
-      "Checkout is temporarily unavailable. Please try again.",
-      503,
-      2000
-    )
-  }
-
-  const productMap = new Map(products.map((product) => [product.id, product]))
-  if (productMap.size !== productIds.length) {
-    return errorResponse(
-      "PRODUCT_UNAVAILABLE",
-      "One or more products are no longer available.",
-      409
-    )
-  }
-
-  const vendorIds = [
-    ...new Set(products.map((product) => String(product.vendor_id))),
-  ]
-  const { data: vendors, error: vendorsError } = await supabase
-    .from("vendors")
-    .select("id, is_active, platform_fee_pct_text:platform_fee_pct::text")
-    .in("id", vendorIds)
-
-  if (vendorsError || !vendors) {
-    logOperationFailure("fetch_checkout_vendors", "SERVICE_UNAVAILABLE")
-    return errorResponse(
-      "SERVICE_UNAVAILABLE",
-      "Checkout is temporarily unavailable. Please try again.",
-      503,
-      2000
-    )
-  }
-
-  const vendorMap = new Map(
-    vendors.map((vendor) => [String(vendor.id), vendor])
-  )
-  if (
-    vendorMap.size !== vendorIds.length ||
-    vendorIds.some((vendorId) => vendorMap.get(vendorId)?.is_active !== true)
-  ) {
-    return errorResponse(
-      "VENDOR_UNAVAILABLE",
-      "One or more sellers are currently unavailable.",
-      409
-    )
-  }
-
-  const vendorFeeBps = new Map<string, bigint>()
-  for (const vendorId of vendorIds) {
-    const basisPoints = parseFeePercentToBps(
-      vendorMap.get(vendorId)?.platform_fee_pct_text
-    )
-    if (basisPoints === null) {
-      logOperationFailure("validate_vendor_fee", "VENDOR_UNAVAILABLE")
-      return errorResponse(
-        "VENDOR_UNAVAILABLE",
-        "One or more sellers are currently unavailable.",
-        409
-      )
-    }
-    vendorFeeBps.set(vendorId, basisPoints)
-  }
-
-  const validatedItems: ItemFinancialSnapshot[] = []
-  let totalKobo = 0n
-
-  for (const cartItem of items) {
-    const product = productMap.get(cartItem.product_id)
-    if (!product || product.is_active !== true) {
-      return errorResponse(
-        "PRODUCT_UNAVAILABLE",
-        "One or more products are no longer available.",
-        409
-      )
-    }
-
-    const stock = Number(product.stock)
-    if (!Number.isFinite(stock) || stock < cartItem.quantity) {
-      return errorResponse(
-        "INSUFFICIENT_STOCK",
-        "One or more products no longer have enough stock.",
-        409
-      )
-    }
-
-    const unitAmountKobo = parsePriceToKobo(product.price_text)
-    const platformFeeBps = vendorFeeBps.get(String(product.vendor_id))
-    const snapshot =
-      unitAmountKobo !== null && platformFeeBps !== undefined
-        ? calculateItemFinancialSnapshot(
-            unitAmountKobo,
-            cartItem.quantity,
-            platformFeeBps
-          )
-        : null
-    if (!snapshot) {
-      logOperationFailure("validate_product_price", "INVALID_PRODUCT_PRICE")
-      return errorResponse(
-        "INVALID_PRODUCT_PRICE",
-        "One or more products cannot currently be purchased.",
-        422
-      )
-    }
-
-    totalKobo += snapshot.gross_amount_kobo
-
-    validatedItems.push({
-      product_id: product.id,
-      vendor_id: product.vendor_id,
-      ...snapshot,
-    })
-  }
-
-  const paystackAmount = bigintToSafeNumber(totalKobo)
-  if (!isRepresentableNumeric12_2Kobo(totalKobo) || paystackAmount === null) {
-    logOperationFailure("validate_order_total", "INVALID_PRODUCT_PRICE")
-    return errorResponse(
-      "INVALID_PRODUCT_PRICE",
-      "The order total cannot currently be processed.",
-      422
-    )
-  }
-
-  const idempotencyKey = `CHECKOUT-${checkoutAttemptId}`
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      checkout_attempt_id: checkoutAttemptId,
-      customer_id: verifiedCustomerId,
-      customer_name: customerName,
-      customer_email: customerEmail,
-      customer_phone: customerPhone,
-      status: "pending",
-      total_amount: koboToNairaDecimal(totalKobo),
-      total_amount_kobo: totalKobo.toString(),
-      currency: "NGN",
-      financial_contract_version: 2,
-      idempotency_key: idempotencyKey,
-      shipping_address: shippingAddress,
-    })
-    .select("id")
-    .single()
-
-  if (orderError || !order) {
-    if (orderError?.code === "23505") {
-      const racedAttempt = await existingAttemptResponse(
-        supabase,
-        checkoutAttemptId,
-        requestFingerprint,
-        verifiedCustomerId
-      )
-      if (racedAttempt) return racedAttempt
-    }
-
-    logOperationFailure("insert_pending_order", "SERVICE_UNAVAILABLE")
-    return errorResponse(
-      "SERVICE_UNAVAILABLE",
-      "Checkout is temporarily unavailable. Please try again.",
-      503,
-      2000
-    )
-  }
-
-  const orderId = String(order.id)
-  const cleanupOrder = async () => {
-    const { error: itemsCleanupError } = await supabase
-      .from("order_items")
-      .delete()
-      .eq("order_id", orderId)
-    if (itemsCleanupError) {
-      logOperationFailure(
-        "cleanup_order_items",
-        "SERVICE_UNAVAILABLE",
-        orderId
-      )
-    }
-
-    const { error: orderCleanupError } = await supabase
-      .from("orders")
-      .delete()
-      .eq("id", orderId)
-    if (orderCleanupError) {
-      logOperationFailure("cleanup_order", "SERVICE_UNAVAILABLE", orderId)
-    }
-  }
-
   const expiresAt = new Date(
     Date.now() + CHECKOUT_REUSE_WINDOW_MS
   ).toISOString()
-  const { error: attemptInsertError } = await supabase
-    .from("checkout_attempts")
-    .insert({
-      checkout_attempt_id: checkoutAttemptId,
-      order_id: orderId,
-      request_fingerprint: requestFingerprint,
-      payment_reference: null,
-      payment_authorization_url: null,
-      expires_at: expiresAt,
+  const { data: constructionData, error: constructionError } =
+    await supabase.rpc("construct_trusted_checkout_order", {
+      p_checkout_attempt_id: checkoutAttemptId,
+      p_customer_id: verifiedCustomerId,
+      p_customer_email: customerEmail,
+      p_customer_name: customerName,
+      p_customer_phone: customerPhone,
+      p_shipping_address: shippingAddress,
+      p_request_fingerprint: requestFingerprint,
+      p_expires_at: expiresAt,
+      p_items: items,
     })
 
-  if (attemptInsertError) {
+  if (constructionError) {
+    const failure = classifyTrustedConstructionError(constructionError)
+    logOperationFailure("construct_trusted_checkout_order", failure.code)
+    return errorResponse(
+      failure.code,
+      failure.message,
+      failure.status,
+      failure.retryAfterMs
+    )
+  }
+
+  const construction = parseTrustedConstructionResult(
+    constructionData,
+    items.length
+  )
+  if (!construction) {
     logOperationFailure(
-      "reserve_checkout_attempt",
-      "SERVICE_UNAVAILABLE",
-      orderId
+      "validate_trusted_checkout_construction",
+      "SERVICE_UNAVAILABLE"
     )
-    await cleanupOrder()
     return errorResponse(
       "SERVICE_UNAVAILABLE",
       "Checkout is temporarily unavailable. Please try again.",
@@ -1154,28 +1082,20 @@ async function handleCheckout(req: Request): Promise<Response> {
     )
   }
 
-  const orderItems = validatedItems.map((item) => ({
-    order_id: orderId,
-    product_id: item.product_id,
-    vendor_id: item.vendor_id,
-    quantity: item.quantity,
-    unit_price: koboToNairaDecimal(item.unit_amount_kobo),
-    subtotal: koboToNairaDecimal(item.gross_amount_kobo),
-    unit_amount_kobo: item.unit_amount_kobo.toString(),
-    gross_amount_kobo: item.gross_amount_kobo.toString(),
-    platform_fee_bps: item.platform_fee_bps.toString(),
-    platform_fee_amount_kobo: item.platform_fee_amount_kobo.toString(),
-    vendor_net_amount_kobo: item.vendor_net_amount_kobo.toString(),
-    currency: "NGN",
-    financial_contract_version: 2,
-  }))
-  const { error: itemsError } = await supabase
-    .from("order_items")
-    .insert(orderItems)
+  if (construction.outcome === "already_constructed") {
+    const recoveredAttempt = await existingAttemptResponse(
+      supabase,
+      checkoutAttemptId,
+      requestFingerprint,
+      verifiedCustomerId
+    )
+    if (recoveredAttempt) return recoveredAttempt
 
-  if (itemsError) {
-    logOperationFailure("insert_order_items", "SERVICE_UNAVAILABLE", orderId)
-    await cleanupOrder()
+    logOperationFailure(
+      "recover_trusted_checkout_construction",
+      "SERVICE_UNAVAILABLE",
+      construction.orderId
+    )
     return errorResponse(
       "SERVICE_UNAVAILABLE",
       "Checkout is temporarily unavailable. Please try again.",
@@ -1183,6 +1103,9 @@ async function handleCheckout(req: Request): Promise<Response> {
       2000
     )
   }
+
+  const orderId = construction.orderId
+  const paystackAmount = construction.totalAmountKobo
 
   const callbackUrl = new URL("/payment-success", storefrontOrigin)
   callbackUrl.searchParams.set("order", orderId)

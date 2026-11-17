@@ -11,6 +11,8 @@ const productFormFile = "src/components/vendor/product-form.tsx"
 const productsTableFile = "src/components/vendor/products-table.tsx"
 const productsPageFile = "src/app/vendor/products/page.tsx"
 const checkoutFile = "supabase/functions/handle-checkout/index.ts"
+const trustedConstructionFile =
+  "supabase/migrations/20261105084924_add_trusted_variant_order_construction.sql"
 const finalizerFile =
   "supabase/migrations/20261007135410_add_atomic_paid_order_stock_finalization.sql"
 
@@ -20,6 +22,7 @@ const productForm = read(productFormFile)
 const productsTable = read(productsTableFile)
 const productsPage = read(productsPageFile)
 const checkout = read(checkoutFile)
+const trustedConstruction = read(trustedConstructionFile)
 const finalizer = read(finalizerFile)
 
 function between(source, start, end) {
@@ -333,15 +336,42 @@ test("foundation order-item validation is nonlocking and rejects premature varia
   assert.match(helper, /parent_mode is distinct from 'none'/)
 })
 
-test("ordinary checkout order-item insertion remains compatible", () => {
-  const orderItems = between(
-    checkout,
-    "const orderItems = validatedItems.map",
-    "if (itemsError)"
+test("ordinary checkout order-item construction remains compatible through the trusted RPC", () => {
+  const constructor = between(
+    trustedConstruction,
+    "create function public.construct_trusted_checkout_order(",
+    "alter function public.construct_trusted_checkout_order("
   )
-  assert.match(orderItems, /product_id: item\.product_id/)
-  assert.match(orderItems, /quantity: item\.quantity/)
-  assert.doesNotMatch(orderItems, /product_variant_id|variant_size_snapshot|variant_colour_snapshot/)
+  const ordinaryBranch = between(
+    constructor,
+    "if item_record.product_variant_id is null then",
+    "else\n      if product_record.variant_mode = 'none' then"
+  )
+  const itemInsert = between(
+    constructor,
+    "insert into public.order_items (",
+    "select pg_catalog.count(*)::integer"
+  )
+
+  assert.match(
+    checkout,
+    /await supabase\.rpc\("construct_trusted_checkout_order", \{[\s\S]*p_items: items/
+  )
+  assert.doesNotMatch(checkout, /\.from\("order_items"\)\s*\.insert/)
+  assert.match(
+    constructor,
+    /when not \(item\.value \? 'product_variant_id'\)[\s\S]*then null/
+  )
+  assert.match(ordinaryBranch, /product_record\.variant_mode is distinct from 'none'/)
+  assert.match(ordinaryBranch, /product_record\.stock < item_record\.quantity/)
+  assert.match(itemInsert, /\(item_record\.value ->> 'product_id'\)::uuid/)
+  assert.match(itemInsert, /\(item_record\.value ->> 'quantity'\)::integer/)
+  assert.match(itemInsert, /\(item_record\.value ->> 'product_variant_id'\)::uuid/)
+  assert.match(
+    constructor,
+    /if item_record\.value ->> 'product_variant_id' is not null then[\s\S]*insert into marketa_private\.trusted_order_item_insert_authorizations/
+  )
+  assert.match(checkout, /const VARIANT_CHECKOUT_ENABLED = false/)
   assert.match(migration, /if new\.product_id is null then/)
   assert.match(migration, /parent_mode is distinct from 'none'/)
 })
