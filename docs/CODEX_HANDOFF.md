@@ -7,16 +7,12 @@ repository and applied migrations take precedence over this handoff.
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `f9b2a3c6badc911d3ba56220807f8cbc5a1cd825`.
+- HEAD: `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`.
 - Local `origin/main`: the same commit.
-- Before this documentation closeout, the working tree contained exactly the
-  14 independently accepted D4 source, test, and migration paths: three order
-  history pages; `supabase/functions/handle-checkout/index.ts`; four modified
-  historical checkout/variant tests; two new server/snapshot libraries; the
-  D4-3 migration; and three new D4 tests. This closeout additionally modifies
-  `docs/CODEX_HANDOFF.md`, `README.md`, and `STOREFRONT_V2.md`, for 17 paths
-  total. Nothing is staged, committed, pushed, migrated, or deployed by this
-  closeout.
+- The release working tree was clean before this documentation-only acceptance
+  closeout. This closeout modifies only `README.md`, `STOREFRONT_V2.md`, and
+  `docs/CODEX_HANDOFF.md`. Nothing is staged, committed, pushed, migrated, or
+  deployed by the closeout.
 - All 14 accepted source hashes match the final acceptance checkpoint. The
   responsive vendor order list SHA-256 is
   `8de86d516d2395d8c4d7fab78a432aff4ce9b5f2774c870c39780217e4b50fc5`; the
@@ -24,14 +20,16 @@ repository and applied migrations take precedence over this handoff.
   `9c7f3aa02a9cfcb6a6e5a3a3d31ec2aaf7664f98f8a45d07c9e0c7ddf1d3c201`.
 - Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, 2C-D2, and
   2C-D3-A1 are applied to the linked production database through
-  `20261106105539_add_public_product_variant_projection.sql`. The production
-  ledger contains 34 migrations.
+  `20261106105539_add_public_product_variant_projection.sql`, and D4-3
+  `20261113092035_restrict_order_base_table_select.sql` is also applied. The
+  production ledger contains all 35 of 35 migrations.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
   `verify_jwt=false` and performs its own bearer authentication. Production
-  `handle-checkout` remains the pre-D4 v12 implementation until the controlled
-  release below.
+  `handle-checkout` is the accepted D4 implementation: ID
+  `75f93fff-bb2a-4af8-89c0-4b34f51152b4`, version `1`, ACTIVE, with
+  `verify_jwt=false` and internal bearer authentication.
 
 ## Current product state
 
@@ -308,11 +306,12 @@ identity, current-cart revalidation, variant-only and mixed rejection,
 signed-out login redirection, and mobile checkout entry. The later owner
 production smoke test passed. No real payment or variant activation occurred.
 
-### D4 implementation and acceptance
+### D4 implementation and production acceptance
 
-**D4-1, D4-2, and D4-3 are implemented, independently source-accepted, and
-validated against disposable project `fzxxyfvxqfmioebircug`; none is deployed
-to protected production project `jznuklvrhfivbdsxgiwv`.**
+**D4-1, D4-2, and D4-3 are production-complete as of 2026-11-17 on protected
+production project `jznuklvrhfivbdsxgiwv`.** The accepted application release is
+commit `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`, deployed by Vercel as
+`dpl_BsqB5u12QCHmqRdEnYyrPp98PaUY`.
 
 - D4-1 changes `handle-checkout` to perform strict server-side item identity
   validation and delegate construction once to the installed service-role-only
@@ -344,8 +343,12 @@ Final disposable integration covered trusted construction, database
 concurrency, C3 financial finalization, genuine Auth authorization,
 authenticated and anonymous direct API denial, restricted Deno execution,
 simulated payment initialization, replay and failure paths, and variant
-containment. Accepted evidence is 985/985 repository tests and 260/260 targeted
-integration tests. Manual authenticated browser QA passed 22/22 after the
+containment. Final acceptance evidence is 985/985 repository tests, 260/260
+targeted integration tests, 56/56 final focused regressions, 22/22 disposable
+manual QA checks, and 6/6 production browser smoke checks. The production
+authenticated session was verified; `orders` and `order_items` REST requests
+each returned HTTP 403 / PostgreSQL `42501`; anonymous API denial and hosted
+non-payment checks passed. Manual authenticated browser QA passed after the
 vendor order list and detail pages were corrected for approximately 390 px
 viewports; desktop behavior, authorization, snapshot labels, shipping data, and
 financial calculations were preserved. The owner confirms there are no active
@@ -358,97 +361,37 @@ The responsive correction hashes are:
 - `src/app/vendor/orders/[id]/page.tsx`:
   `9c7f3aa02a9cfcb6a6e5a3a3d31ec2aaf7664f98f8a45d07c9e0c7ddf1d3c201`
 
-Disposable records the D4-3 SQL under migration version `20261116105315`,
-whereas the canonical repository filename is version `20261113092035`. This is
-an acknowledged ledger-label discrepancy, not authorization to rename the file,
-repair migration history, or reapply equivalent SQL. Production must install
-the canonical version only after migration-list and dry-run evidence proves it
-is the sole missing migration and that equivalent SQL is not already recorded.
+Production records all 35 of 35 canonical migrations, including D4-3
+`20261113092035_restrict_order_base_table_select.sql`. The accepted production
+`handle-checkout` is ACTIVE with ID
+`75f93fff-bb2a-4af8-89c0-4b34f51152b4`, version `1`, `verify_jwt=false`, and
+source SHA-256
+`a2416556eae4cab9b4ac98e74ffe2e057db412122f4582b9004e8b826667b12d`.
 
-### D4 controlled production release runbook
+### D4 production cutover record
 
-1. Reverify `main`, HEAD/origin at
-   `f9b2a3c6badc911d3ba56220807f8cbc5a1cd825`, zero staged paths, all 14 accepted
-   source hashes, the three documentation diffs, `git diff --check`, and the
-   absence of secrets/test-only switches. Stage exactly those 17 paths, inspect
-   the staged diff, commit with `feat: complete D4 trusted checkout and order
-   data hardening`, and push `main`.
-2. Let the existing main-branch Vercel integration deploy the commit. Do not
-   touch database grants or the Edge handler until the production deployment is
-   READY, reports the exact commit, and passes read-only checks for customer and
-   vendor order history, desktop/mobile rendering, login, catalogue, cart
-   persistence, and ordinary checkout entry without submitting payment. The D4
-   application is compatible with the still-open pre-D4 grants; the inverse is
-   not safe after D4-3.
-3. Begin a declared checkout maintenance window. Stop new checkout requests by
-   taking the existing endpoint out of service with
-   `npx supabase functions delete handle-checkout --project-ref
-   jznuklvrhfivbdsxgiwv`, then wait at least the platform's configured maximum
-   Edge execution duration and confirm from runtime logs that no v12 invocation
-   remains in flight. Cached clients receive an endpoint failure during this
-   interval and must retry later. Do not deploy new and old handlers concurrently
-   and do not assume the D4 RPC advisory lock coordinates an old handler that
-   performs direct inserts.
-4. Inventory existing pending orders and checkout attempts read-only. Preserve
-   every row and its original `checkout_attempt_id`. Allow fully persisted
-   authorization records to reuse their existing URL/reference; investigate any
-   order-without-attempt or provider-ambiguous state before continuing. Never
-   create a replacement attempt ID or automatically repeat an ambiguous Paystack
-   initialization.
-5. Verify the canonical migration hash above, confirm the CLI is the reviewed
-   repository version (`npx supabase --version` currently reports `2.109.1`),
-   explicitly link production with
-   `npx supabase link --project-ref jznuklvrhfivbdsxgiwv`, confirm the displayed
-   project ref, and run
-   `npx supabase migration list --linked` followed by
-   `npx supabase db push --linked --dry-run`. Proceed only if the output names
-   exactly `20261113092035_restrict_order_base_table_select.sql`. If the CLI
-   requires `--include-all` because production already has later ledger entries,
-   first run the same dry-run with `--include-all` and prove this remains the
-   only proposed migration; then use
-   `npx supabase db push --linked --include-all`. Otherwise use
-   `npx supabase db push --linked`. Do not use `migration repair`, rename the
-   file, seed data, or accept any additional migration.
-6. Immediately verify production ledger version `20261113092035`, absence of
-   base-table and column SELECT for `authenticated`, `anon`, and `PUBLIC`,
-   unchanged service-role authority/RLS/functions, and successful compatible
-   application history pages. Keep checkout unavailable if any postcondition or
-   application check fails.
-7. Deploy only the accepted function with the explicit production target:
-   `npx supabase functions deploy handle-checkout --project-ref
-   jznuklvrhfivbdsxgiwv --no-verify-jwt`. The flag matches the reviewed
-   `supabase/config.toml`; the function performs bearer verification internally.
-   Do not deploy other functions or change secrets. Confirm startup/imports and
-   execute only safe pre-provider paths before reopening checkout.
-8. Run the production smoke matrix below, monitor application/Edge/database logs,
-   and reopen checkout only after all gates pass. Record the Git commit, Vercel
-   deployment, production migration ledger, Edge deployment/version, and smoke
-   evidence. Only then mark D4 production complete. D5 remains unauthorized.
+The controlled cutover used the official Supabase Management API transport.
+Old `handle-checkout` v12 was removed, the old runtime drained for 185 seconds,
+and the accepted D4 handler was deployed after D4-3. Pending inventory remained
+unchanged, no unintended financial writes occurred, protected D2/C2/C3 hashes
+stayed unchanged, and every unrelated function was preserved.
 
-Production smoke checks are non-payment: ordinary Add to Cart, navbar count,
-quantity/removal, refresh persistence, cart open/close without a storage write,
-signed-out and authenticated checkout entry without pressing Pay, customer and
-vendor history including snapshot labels and unavailable history, 390 px and
-desktop vendor pages without viewport overflow, anonymous/authenticated direct
-API denial, Edge OPTIONS/method/media/malformed/auth rejection, and variant
-rejection before RPC/provider work. Do not manufacture a production variant,
-create an order, initialize Paystack, or claim unexecuted payable behavior.
+The production smoke checks were deliberately non-payment. Positive payment
+initialization was tested through restricted local Deno with a mocked provider,
+not through a payable hosted request. Paystack remains in test mode. The
+accepted historical test-payment discrepancies remain unchanged, and historical
+test-data cleanup remains a prelaunch backlog. There are no active n8n
+workflows.
 
-Recovery is forward-fix-first. A Vercel failure before D4-3 stops the release
-with production grants and Edge unchanged. A transactional migration failure
-should roll back; keep checkout unavailable, diagnose the exact precondition,
-and rerun only after review. Once D4-3 commits, never roll back to an application
-that performs authenticated base-table reads and never reopen base-table access
-as a routine fix—deploy a compatible forward correction instead. If the new
-handler fails, keep it unavailable and ship a reviewed D4 forward fix; do not
-restore v12 after requests may have used the trusted constructor. Preserve
-pending attempts, reconcile Paystack ambiguity using stored references and
-provider evidence, and retry only with the original attempt identity. The D3-A3
-version-1 cart and D3-A4 separation/recovery contracts remain mandatory.
+Recovery remains forward-fix-first: do not reopen base-table access or restore
+v12 after trusted-constructor execution. Preserve pending attempts, reconcile
+provider ambiguity by stored reference and provider evidence, and retain the
+original attempt identity. The D3-A3 version-1 cart and D3-A4
+separation/recovery contracts remain mandatory.
 
-D5 remains controlled variant publication and customer purchasing activation.
-Production currently has no published variant parents, draft-only constraints
-remain in force, and variant purchasing remains disabled.
+D5 is the next planned implementation phase and has not started. Production has
+no published variant parents, draft-only constraints remain in force, and
+variant purchasing stays disabled.
 
 ## Vendor provisioning status
 
@@ -934,15 +877,16 @@ Completed:
   commit `f9b2a3c6badc911d3ba56220807f8cbc5a1cd825`; the owner production smoke
   test passed.
 - D4-1 trusted Edge construction, D4-2 immutable snapshot order history, and
-  D4-3 order-data access hardening are implemented and independently accepted
-  locally. Disposable integration passed 985/985 repository and 260/260
-  targeted tests, and final authenticated manual QA passed 22/22. D4 is not
-  deployed to production.
+  D4-3 order-data access hardening are production-complete at release commit
+  `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`. Final evidence is 985/985
+  repository tests, 260/260 targeted integration tests, 56/56 focused
+  regressions, 22/22 disposable manual QA checks, and 6/6 production browser
+  smoke checks.
 
 Next release milestone:
 
-- Controlled D4 production release in the exact dependency order documented
-  above. D5 is not activated by this release.
+- D5 controlled variant publication and customer purchasing activation. D5 has
+  not started.
 
 Paused:
 
@@ -995,26 +939,24 @@ Deferred validation:
 - Customer order detail at `/account/orders/[id]` remains deferred.
 - Existing product/storefront cleanup remains a separate backlog.
 - Generic variants remain draft-only. D2 trusted order construction is
-  installed; production's current pre-D4 Edge Function does not call it. The
-  accepted local D4-1 function does, but is not deployed.
+  installed and the production D4-1 handler calls it, while the production gate
+  continues to reject variant-bearing checkout requests.
 - D3-A2 integrates the installed D3-A1 read contracts into production customer
   storefront queries. D3-A3 cart identity and persistence are released to
   production under the forward-fix-first policy; the original D3-A2 build is
   unsafe for upgraded version-1 carts and must not be used as a rollback target.
-  D3-A4 checkout separation is also production-deployed. D4 is implemented and
-  fully validated locally but awaits the controlled production sequence. D5
-  publication and variant-specific purchasing remain unavailable. Production
-  has no published variant parents.
+  D3-A4 checkout separation and D4 are production-deployed. D5 publication and
+  variant-specific purchasing remain unavailable. Production has no published
+  variant parents.
 
 ## Documentation alignment
 
-This handoff, `README.md`, and `STOREFRONT_V2.md` reflect production through
-D3-A4 commit `f9b2a3c6badc911d3ba56220807f8cbc5a1cd825` and distinguish it from
-the accepted but uncommitted/unreleased D4 working tree. D4-1, D4-2, and D4-3
-are implemented and validated locally; production still uses the old checkout
-handler and pre-D4 order-data grants until the controlled release runbook is
-executed. D5 publication and customer variant purchasing remain pending. Real
-paid-order delivery remains paused before provider enablement. No
+This handoff, `README.md`, and `STOREFRONT_V2.md` reflect accepted production
+release `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`. D4-1, D4-2, and D4-3 are
+production-complete; the canonical D4-3 migration and accepted D4 checkout
+handler are active. D5 is the next planned implementation phase and has not
+started. Variant purchasing remains disabled. Real paid-order delivery remains
+paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

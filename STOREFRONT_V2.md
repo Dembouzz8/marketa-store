@@ -873,8 +873,8 @@ repository tests, 16/16 checkout-boundary tests, TypeScript, changed-file
 ESLint, the production build, synthetic Chrome/CDP QA, and the later owner
 production smoke test. No real payment or variant activation was performed.
 
-**D4 is implemented and validated locally, but not production-deployed.** D4-1
-replaces direct Edge-side order, item, and attempt construction with one call to
+**D4-1, D4-2, and D4-3 are production-complete as of 2026-11-17.** D4-1 replaces
+direct Edge-side order, item, and attempt construction with one call to
 the installed service-role-only `public.construct_trusted_checkout_order` RPC.
 Authentication, trusted customer identity, strict validation, ordinary
 fingerprint bytes, recovery, Paystack initialization, and C3 finalization remain
@@ -895,22 +895,29 @@ Disposable validation passed genuine Auth, customer/vendor isolation, direct
 authenticated and anonymous API denial, trusted construction, concurrency, C3
 finalization, restricted Deno execution, simulated payment initialization,
 replay and failure handling, and variant containment. Accepted results are
-985/985 full-repository tests and 260/260 targeted integration tests. Manual
-browser QA passed 22/22 after the vendor list and detail pages adopted responsive
-cards and wrapping layouts. Desktop presentation, authorization, snapshots, and
-financial calculations were preserved. There are no active n8n workflows.
+985/985 full-repository tests, 260/260 targeted integration tests, 56/56 final
+focused regressions, 22/22 disposable manual QA checks, and 6/6 production
+browser smoke checks. The production authenticated session was verified;
+`orders` and `order_items` REST access each returned HTTP 403 / PostgreSQL
+`42501`; anonymous API denial and hosted non-payment checks passed. Desktop
+presentation, authorization, snapshots, and financial calculations were
+preserved.
 
-The final source checkpoint is `main` at
-`f9b2a3c6badc911d3ba56220807f8cbc5a1cd825`, equal to `origin/main`, with zero
-staged files and exactly 14 accepted D4 paths. The corrected vendor list and
-detail SHA-256 values are
-`8de86d516d2395d8c4d7fab78a432aff4ce9b5f2774c870c39780217e4b50fc5` and
-`9c7f3aa02a9cfcb6a6e5a3a3d31ec2aaf7664f98f8a45d07c9e0c7ddf1d3c201`.
-The canonical D4-3 migration hash is
+The accepted production source checkpoint is release commit
+`9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`, deployed by Vercel as
+`dpl_BsqB5u12QCHmqRdEnYyrPp98PaUY`. Production Supabase project
+`jznuklvrhfivbdsxgiwv` records 35 of 35 migrations applied. D4-3 is canonical
+migration `20261113092035_restrict_order_base_table_select.sql`; its hash is
 `d37c3f279962e3432f3a4d03cf4dcab1de0fcf6cb69c934eaf96631e8cf31411`.
-Disposable installed equivalent SQL under ledger version `20261116105315`;
-production must install canonical version `20261113092035` without blindly
-renaming, repairing, or replaying migration history.
+The production `handle-checkout` is ACTIVE with ID
+`75f93fff-bb2a-4af8-89c0-4b34f51152b4`, version `1`, `verify_jwt=false`, and
+source SHA-256
+`a2416556eae4cab9b4ac98e74ffe2e057db412122f4582b9004e8b826667b12d`.
+
+The controlled cutover used the Management API transport, removed old v12, and
+completed a 185-second drain. Pending inventory remained unchanged, no
+unintended financial writes occurred, protected D2/C2/C3 hashes stayed
+unchanged, and every unrelated function was preserved.
 
 Release status:
 
@@ -923,22 +930,21 @@ Release status:
 - **2C-D3-A4 — Complete and production-deployed:** commit
   `f9b2a3c6badc911d3ba56220807f8cbc5a1cd825` and owner production smoke testing
   are complete.
-- **2C-D4 — Implemented and validated locally, not production-deployed:** D4-1,
-  D4-2, and D4-3 passed independent acceptance, disposable integration, and
-  final 22/22 authenticated manual QA.
-- **2C-D5 — Pending:** controlled variant publication and customer purchasing
-  activation.
+- **2C-D4-1 — Production-complete:** trusted checkout construction is active in
+  the accepted production handler.
+- **2C-D4-2 — Production-complete:** immutable, server-authorized order history
+  is active in the accepted application release.
+- **2C-D4-3 — Production-complete:** canonical order base-table access
+  hardening is migration 35 of 35 in production.
+- **2C-D5 — Next planned implementation phase; not started:** controlled
+  variant publication and customer purchasing activation.
 
-Production currently includes D3-A4 but not the D4 application, D4-3 privilege
-revocation, or D4-1 Edge handler. Release ordering is dependency-sensitive: push
-the accepted commit, wait for and verify the compatible Vercel application,
-quiesce the old v12 handler and drain all in-flight requests, apply only D4-3,
-deploy the accepted new handler, then run non-payment smoke checks. The new
-handler's advisory lock cannot coordinate a request already executing the old
-handler. Preserve pending orders and attempts, reconcile provider ambiguity
-before retry, and reopen checkout only after the old runtime is drained and the
-new runtime passes its safe pre-provider checks. Variant purchasing remains
-disabled and D5 stays pending.
+Positive payment initialization was tested through restricted local Deno with a
+mocked provider, not a payable hosted request. Paystack remains in test mode.
+The accepted historical test-payment discrepancies remain unchanged, and
+historical test-data cleanup remains a prelaunch backlog. There are no active
+n8n workflows. Production still has no published variant parents; draft-only
+constraints remain active, and variant purchasing stays disabled.
 
 ### Phase 4 — Customer experience
 
