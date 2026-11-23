@@ -597,6 +597,22 @@ The cutover used the Supabase Management API, removed old v12, completed a
 unintended financial writes; protected D2/C2/C3 hashes and all unrelated
 functions remained unchanged.
 
+**Batch 2C-D5-1 implementation and disposable acceptance are complete.** The
+canonical secure variant-publication migration and its focused source test
+passed 89 runtime tests, 31 focused source tests, and all 8 genuine PostgreSQL
+concurrency races. Canonical-versus-installed RPC parity passed, including the
+corrected actor binding; security, ACL, locking, release-default, and failure
+behavior review identified no technical defect.
+
+D5-1 has not been applied to production. Publication release control remains
+OFF, customer variant purchasing remains OFF, and production still has no
+published variant parents. D5-2, the vendor publication interface, is next;
+D5-3 and later activation stages remain gated. The accepted Race H application
+contract is one publication operation per transaction. Multiple publication
+operations inside one explicit transaction can invert D2 lock ordering and
+produce PostgreSQL deadlock SQLSTATE `40P01`; this is a D5-2 interface
+constraint, not an unresolved D5-1 correctness failure.
+
 The release status is:
 
 - **2C-D3-A2 — Complete:** committed, deployed READY, and production
@@ -615,15 +631,20 @@ The release status is:
   is active in the accepted application release.
 - **2C-D4-3 — Production-complete:** canonical order base-table SELECT
   restriction is migration 35 of 35 in production.
-- **2C-D5 — Next planned implementation phase; not started:** controlled
-  variant publication and customer purchasing activation.
+- **2C-D5-1 — Implementation-complete and disposable-accepted:** canonical RPC
+  parity, corrected actor binding, security defaults, and 8/8 concurrency races
+  passed. The migration is not production-applied and release control remains
+  OFF.
+- **2C-D5-2 — Next:** vendor publication interface, preserving one publication
+  operation per transaction. D5-3 and later activation stages remain gated.
 
 Positive payment initialization was tested only through restricted local Deno
 with a mocked provider, not through a payable hosted request. Paystack remains
 in test mode. The accepted historical test-payment discrepancies remain
 unchanged, and historical test-data cleanup remains a prelaunch backlog. There
-are no active n8n workflows. Production has no published variant parents;
-draft-only constraints remain in force, and variant purchasing stays disabled.
+are no active n8n workflows. Production has no published variant parents; the
+D5-1 migration is not applied there, draft-only constraints remain in force,
+and variant purchasing stays disabled.
 
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation

@@ -919,6 +919,22 @@ completed a 185-second drain. Pending inventory remained unchanged, no
 unintended financial writes occurred, protected D2/C2/C3 hashes stayed
 unchanged, and every unrelated function was preserved.
 
+**Batch 2C-D5-1 implementation and disposable acceptance are complete.** The
+canonical secure variant-publication migration and focused source test passed
+89 runtime tests, 31 focused source tests, and 8/8 genuine PostgreSQL
+concurrency races. Canonical-versus-installed RPC parity passed, the corrected
+actor binding is incorporated, and review of security, ACLs, locking, release
+defaults, and failure behavior found no technical defect.
+
+D5-1 is not production-deployed. Publication release control remains OFF,
+customer variant purchasing remains OFF, and production still has no published
+variant parents. D5-2, the vendor publication interface, is next; D5-3 and
+later activation stages remain gated. Race H establishes an application
+contract of one publication operation per transaction. Multiple publication
+operations inside one explicit transaction can invert D2 lock ordering and
+cause PostgreSQL deadlock SQLSTATE `40P01`; that is a D5-2 interface constraint,
+not an unresolved D5-1 correctness failure.
+
 Release status:
 
 - **2C-D3-A2 — Complete:** committed, deployed READY, and production
@@ -936,15 +952,20 @@ Release status:
   is active in the accepted application release.
 - **2C-D4-3 — Production-complete:** canonical order base-table access
   hardening is migration 35 of 35 in production.
-- **2C-D5 — Next planned implementation phase; not started:** controlled
-  variant publication and customer purchasing activation.
+- **2C-D5-1 — Implementation-complete and disposable-accepted:** canonical RPC
+  parity, corrected actor binding, security defaults, and 8/8 concurrency races
+  passed. The migration is not production-applied and release control remains
+  OFF.
+- **2C-D5-2 — Next:** vendor publication interface, preserving one publication
+  operation per transaction. D5-3 and later activation stages remain gated.
 
 Positive payment initialization was tested through restricted local Deno with a
 mocked provider, not a payable hosted request. Paystack remains in test mode.
 The accepted historical test-payment discrepancies remain unchanged, and
 historical test-data cleanup remains a prelaunch backlog. There are no active
-n8n workflows. Production still has no published variant parents; draft-only
-constraints remain active, and variant purchasing stays disabled.
+n8n workflows. Production still has no published variant parents; the D5-1
+migration is not applied there, draft-only constraints remain active, and
+variant purchasing stays disabled.
 
 ### Phase 4 — Customer experience
 

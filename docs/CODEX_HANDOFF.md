@@ -1,18 +1,21 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-11-17. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-23. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- HEAD: `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`.
-- Local `origin/main`: the same commit.
-- The release working tree was clean before this documentation-only acceptance
-  closeout. This closeout modifies only `README.md`, `STOREFRONT_V2.md`, and
-  `docs/CODEX_HANDOFF.md`. Nothing is staged, committed, pushed, migrated, or
-  deployed by the closeout.
+- Pre-acceptance HEAD: `d4d8aa87fab3ce2d2b26e1ff162c01ae58c4a76a`.
+- The verified pre-acceptance working tree contained exactly two untracked D5-1
+  files: `supabase/migrations/20261117211005_add_secure_variant_publication_authority.sql`
+  (SHA-256 `cf695906cb388cf08c8eeb1f5bfadcd349c83493610151ed05ca154214932469`)
+  and `tests/variant-publication-authority.test.mjs` (SHA-256
+  `53661f783e7788bed5214842b19fe59079ed6f1b814de95bd8fa40724eb8d9a3`).
+- This acceptance closeout modifies only `README.md`, `STOREFRONT_V2.md`, and
+  `docs/CODEX_HANDOFF.md`; it leaves both D5-1 implementation files unchanged.
+  Nothing is staged, committed, pushed, migrated, or deployed by the closeout.
 - All 14 accepted source hashes match the final acceptance checkpoint. The
   responsive vendor order list SHA-256 is
   `8de86d516d2395d8c4d7fab78a432aff4ce9b5f2774c870c39780217e4b50fc5`; the
@@ -389,9 +392,23 @@ provider ambiguity by stored reference and provider evidence, and retain the
 original attempt identity. The D3-A3 version-1 cart and D3-A4
 separation/recovery contracts remain mandatory.
 
-D5 is the next planned implementation phase and has not started. Production has
-no published variant parents, draft-only constraints remain in force, and
-variant purchasing stays disabled.
+### D5-1 implementation and disposable acceptance
+
+D5-1 implementation is complete and passed disposable validation: 89 runtime
+tests, 31 focused source tests, and all 8 genuine PostgreSQL concurrency races
+passed. Canonical-versus-installed publication RPC parity passed, including the
+actor-binding correction. Security, ACL, locking, release-default, and failure
+behavior review identified no technical defect.
+
+The canonical D5-1 migration has not been applied to production. Publication
+release control remains OFF, customer variant purchasing remains OFF, and
+production has no published variant parents. D5-2, the vendor publication
+interface, is next; D5-3 and later activation stages remain gated.
+
+Race H fixes the application contract at one publication operation per
+transaction. Multiple publication operations inside one explicit transaction
+can invert D2 lock ordering and create PostgreSQL deadlock SQLSTATE `40P01`.
+This is a D5-2 interface constraint, not an unresolved D5-1 correctness failure.
 
 ## Vendor provisioning status
 
@@ -885,8 +902,9 @@ Completed:
 
 Next release milestone:
 
-- D5 controlled variant publication and customer purchasing activation. D5 has
-  not started.
+- D5-2 vendor publication interface, preserving one publication operation per
+  transaction. D5-1 is implementation-complete and disposable-accepted but is
+  not production-deployed. D5-3 and later activation stages remain gated.
 
 Paused:
 
@@ -945,18 +963,23 @@ Deferred validation:
   storefront queries. D3-A3 cart identity and persistence are released to
   production under the forward-fix-first policy; the original D3-A2 build is
   unsafe for upgraded version-1 carts and must not be used as a rollback target.
-  D3-A4 checkout separation and D4 are production-deployed. D5 publication and
-  variant-specific purchasing remain unavailable. Production has no published
-  variant parents.
+  D3-A4 checkout separation and D4 are production-deployed. D5-1 source and
+  disposable validation are accepted, but its migration is not applied to
+  production. Publication release control and variant-specific purchasing
+  remain OFF; production has no published variant parents. D5-2 is next, and
+  D5-3 and later activation stages remain gated.
 
 ## Documentation alignment
 
-This handoff, `README.md`, and `STOREFRONT_V2.md` reflect accepted production
-release `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`. D4-1, D4-2, and D4-3 are
-production-complete; the canonical D4-3 migration and accepted D4 checkout
-handler are active. D5 is the next planned implementation phase and has not
-started. Variant purchasing remains disabled. Real paid-order delivery remains
-paused before provider enablement. No
+This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the accepted D4
+production release and the D5-1 repository/disposable acceptance checkpoint at
+pre-acceptance HEAD `d4d8aa87fab3ce2d2b26e1ff162c01ae58c4a76a`. D4-1, D4-2,
+and D4-3 are production-complete; the canonical D4-3 migration and accepted D4
+checkout handler are active. D5-1 is implementation-complete and
+disposable-accepted, with no identified technical defect, but is not applied to
+production. Publication release control and variant purchasing remain OFF;
+D5-2 is next and D5-3 and later activation stages remain gated. Real paid-order
+delivery remains paused before provider enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.
