@@ -390,6 +390,42 @@ function controlledMessage(outcome: string, fallback: string) {
   return outcomeMessages[outcome] ?? fallback
 }
 
+export function getUniversalOptionPublicationState(
+  parentActive: unknown,
+  configurationActive: unknown,
+  variantStates: unknown[]
+): "draft" | "published" | "unavailable" {
+  if (
+    parentActive === true &&
+    configurationActive === true &&
+    variantStates.every((variantActive) => variantActive === true)
+  ) {
+    return "published"
+  }
+  if (
+    parentActive === false &&
+    configurationActive === false &&
+    variantStates.every((variantActive) => variantActive === false)
+  ) {
+    return "draft"
+  }
+  return "unavailable"
+}
+
+export function canEditUniversalOptionStructure(
+  parentActive: unknown,
+  configurationActive: unknown,
+  variantStates: unknown[]
+) {
+  return (
+    getUniversalOptionPublicationState(
+      parentActive,
+      configurationActive,
+      variantStates
+    ) === "draft"
+  )
+}
+
 export function ProductOptionsManager({
   product,
   initialReferenceRows,
@@ -479,9 +515,22 @@ export function ProductOptionsManager({
     referenceData?.categories.find((category) => category.code === categoryCode)
       ?.name ?? categoryCode
   const visibleMode = configuration?.variant_mode ?? product.variant_mode
+  const variantPublicationStates =
+    configuration?.variants.map((variant) => variant.is_active) ?? []
+  const publicationState = getUniversalOptionPublicationState(
+    product.is_active,
+    configuration?.is_active,
+    variantPublicationStates
+  )
+  const structuralEditsAllowed = canEditUniversalOptionStructure(
+    product.is_active,
+    configuration?.is_active,
+    variantPublicationStates
+  )
+  const isPublished = publicationState === "published"
   const eligibleByVisibleState =
     visibleMode === "none" &&
-    product.is_active === false &&
+    structuralEditsAllowed &&
     product.stock === 0
 
   const setUncertain = (message: string) => {
@@ -624,6 +673,7 @@ export function ProductOptionsManager({
   const configureOptions = async () => {
     if (
       !eligibleByVisibleState ||
+      !structuralEditsAllowed ||
       !configurationConfirmed ||
       !categoryCode ||
       pendingOperation ||
@@ -671,6 +721,7 @@ export function ProductOptionsManager({
   }
 
   const chooseNewOption = (optionCode: string) => {
+    if (!structuralEditsAllowed) return
     const definition = optionByCode.get(optionCode)
     const template = categoryTemplates.find(
       (candidate) => candidate.option_code === optionCode
@@ -684,6 +735,7 @@ export function ProductOptionsManager({
 
   const addAxis = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!structuralEditsAllowed) return
     const displayName = axisDisplayName.trim()
     const position = parseWholeNumber(axisPosition, 32767)
     if (
@@ -727,6 +779,7 @@ export function ProductOptionsManager({
   }
 
   const beginAxisEdit = (axis: VendorProductOptionAxis) => {
+    if (!structuralEditsAllowed) return
     setEditingAxisId(axis.id)
     setEditAxisDisplayName(axis.display_name)
     setEditAxisPosition(String(axis.position))
@@ -736,6 +789,7 @@ export function ProductOptionsManager({
   }
 
   const updateAxis = async (axis: VendorProductOptionAxis) => {
+    if (!structuralEditsAllowed) return
     const definition = optionByCode.get(axis.option_code)
     const displayName = editAxisDisplayName.trim()
     const position = parseWholeNumber(editAxisPosition, 32767)
@@ -773,6 +827,7 @@ export function ProductOptionsManager({
     axis: VendorProductOptionAxis,
     value?: VendorProductOptionValue
   ) => {
+    if (!structuralEditsAllowed) return
     setValueAxisId(axis.id)
     setEditingValueId(value?.id ?? null)
     setValueLabel(value?.display_label ?? "")
@@ -789,6 +844,7 @@ export function ProductOptionsManager({
     axis: VendorProductOptionAxis
   ) => {
     event.preventDefault()
+    if (!structuralEditsAllowed) return
     const definition = optionByCode.get(axis.option_code)
     const label = valueLabel.trim()
     const sortOrder = parseWholeNumber(valueSortOrder)
@@ -846,6 +902,7 @@ export function ProductOptionsManager({
 
   const createVariant = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!structuralEditsAllowed) return
     const axes = configuration?.axes ?? []
     const selectedIds = axes.map((axis) => selectedValues[axis.id]).filter(Boolean)
     const stock = parseWholeNumber(variantStock)
@@ -906,7 +963,7 @@ export function ProductOptionsManager({
   }
 
   const confirmDelete = async () => {
-    if (!deleteTarget) return
+    if (!structuralEditsAllowed || !deleteTarget) return
     if (deleteTarget.kind === "axis") {
       await runMutation(
         `axis:delete:${deleteTarget.id}`,
@@ -968,8 +1025,8 @@ export function ProductOptionsManager({
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-zinc-600">
             Configure up to three approved option axes and create only the draft
-            combinations you actually sell. Customer purchasing and publication
-            remain unavailable.
+            combinations you actually sell. Publication state is read-only here,
+            and customer variant purchasing remains unavailable.
           </p>
         </div>
         <Button
@@ -1106,7 +1163,13 @@ export function ProductOptionsManager({
             </div>
             <div>
               <p className="text-xs font-medium uppercase text-amber-700">Status</p>
-              <p className="mt-1 font-semibold text-zinc-900">Draft only</p>
+              <p className="mt-1 font-semibold text-zinc-900">
+                {publicationState === "published"
+                  ? "Published"
+                  : publicationState === "draft"
+                    ? "Draft"
+                    : "State unavailable"}
+              </p>
             </div>
             <div>
               <p className="text-xs font-medium uppercase text-amber-700">Limits</p>
@@ -1115,6 +1178,14 @@ export function ProductOptionsManager({
               </p>
             </div>
           </div>
+
+          {!structuralEditsAllowed ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              {isPublished
+                ? "Unpublish this product before changing option axes, values, assignments, or combinations. Published combination stock can still be updated below."
+                : "Publication state could not be confirmed. Structural changes are locked until authoritative state is reloaded."}
+            </p>
+          ) : null}
 
           <div className="space-y-4">
             <div>
@@ -1125,7 +1196,9 @@ export function ProductOptionsManager({
               </p>
             </div>
 
-            {configuration.axes.length < 3 && availableTemplates.length > 0 ? (
+            {structuralEditsAllowed &&
+            configuration.axes.length < 3 &&
+            availableTemplates.length > 0 ? (
               <form onSubmit={addAxis} className="grid gap-3 rounded-lg border border-zinc-200 p-4 sm:grid-cols-2 lg:grid-cols-3">
                 <label>
                   <span className="mb-1 block text-xs font-medium text-zinc-600">Approved option</span>
@@ -1183,9 +1256,11 @@ export function ProductOptionsManager({
               </form>
             ) : (
               <p className="rounded-lg bg-zinc-50 p-3 text-sm text-zinc-600">
-                {configuration.axes.length >= 3
-                  ? "This product has the maximum three option axes."
-                  : "All approved category options are already configured."}
+                {!structuralEditsAllowed
+                  ? "Option-axis changes are unavailable while structural editing is locked."
+                  : configuration.axes.length >= 3
+                    ? "This product has the maximum three option axes."
+                    : "All approved category options are already configured."}
               </p>
             )}
 
@@ -1206,17 +1281,19 @@ export function ProductOptionsManager({
                           {axis.size_system_code ? ` · ${referenceData.size_systems.find((item) => item.code === axis.size_system_code)?.name ?? axis.size_system_code}` : ""}
                         </p>
                       </div>
-                      <div className="flex gap-2">
+                      {structuralEditsAllowed ? (
+                        <div className="flex gap-2">
                         <Button type="button" size="sm" variant="outline" onClick={() => beginAxisEdit(axis)} disabled={Boolean(pendingOperation)} className="rounded-lg border-zinc-200">
                           <Pencil className="size-3.5" /> Edit
                         </Button>
                         <Button type="button" size="sm" variant="outline" onClick={() => setDeleteTarget({ kind: "axis", id: axis.id, label: axis.display_name })} disabled={Boolean(pendingOperation)} className="rounded-lg border-red-200 text-red-600 hover:bg-red-50">
                           <Trash2 className="size-3.5" /> Delete
                         </Button>
-                      </div>
+                        </div>
+                      ) : null}
                     </div>
 
-                    {isEditingAxis ? (
+                    {structuralEditsAllowed && isEditingAxis ? (
                       <div className="mt-4 grid gap-3 rounded-lg bg-zinc-50 p-3 sm:grid-cols-2 lg:grid-cols-3">
                         <label>
                           <span className="mb-1 block text-xs font-medium text-zinc-600">Display name</span>
@@ -1255,12 +1332,14 @@ export function ProductOptionsManager({
 
                     <div className="mt-5 flex items-center justify-between">
                       <p className="text-sm font-medium text-zinc-900">Available values</p>
-                      <Button type="button" size="sm" variant="outline" onClick={() => beginValueForm(axis)} disabled={Boolean(pendingOperation)} className="rounded-lg border-zinc-200">
-                        <Plus className="size-3.5" /> Add value
-                      </Button>
+                      {structuralEditsAllowed ? (
+                        <Button type="button" size="sm" variant="outline" onClick={() => beginValueForm(axis)} disabled={Boolean(pendingOperation)} className="rounded-lg border-zinc-200">
+                          <Plus className="size-3.5" /> Add value
+                        </Button>
+                      ) : null}
                     </div>
 
-                    {isEditingValue ? (
+                    {structuralEditsAllowed && isEditingValue ? (
                       <form onSubmit={(event) => saveValue(event, axis)} className="mt-3 grid gap-3 rounded-lg bg-zinc-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
                         <label>
                           <span className="mb-1 block text-xs font-medium text-zinc-600">Display label</span>
@@ -1298,8 +1377,12 @@ export function ProductOptionsManager({
                             {value.swatch_hex ? <span className="size-4 rounded-full border border-zinc-200" style={{ backgroundColor: value.swatch_hex }} aria-hidden="true" /> : null}
                             <span className="text-sm text-zinc-800">{value.display_label}</span>
                             {value.numeric_value !== null && unit ? <span className="text-xs text-zinc-500">{value.numeric_value} {unit.symbol}</span> : null}
-                            <button type="button" onClick={() => beginValueForm(axis, value)} disabled={Boolean(pendingOperation)} aria-label={`Edit ${value.display_label}`} className="inline-flex size-7 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100"><Pencil className="size-3.5" /></button>
-                            <button type="button" onClick={() => setDeleteTarget({ kind: "value", id: value.id, label: value.display_label })} disabled={Boolean(pendingOperation)} aria-label={`Delete ${value.display_label}`} className="inline-flex size-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50"><Trash2 className="size-3.5" /></button>
+                            {structuralEditsAllowed ? (
+                              <>
+                                <button type="button" onClick={() => beginValueForm(axis, value)} disabled={Boolean(pendingOperation)} aria-label={`Edit ${value.display_label}`} className="inline-flex size-7 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100"><Pencil className="size-3.5" /></button>
+                                <button type="button" onClick={() => setDeleteTarget({ kind: "value", id: value.id, label: value.display_label })} disabled={Boolean(pendingOperation)} aria-label={`Delete ${value.display_label}`} className="inline-flex size-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50"><Trash2 className="size-3.5" /></button>
+                              </>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -1315,7 +1398,13 @@ export function ProductOptionsManager({
               <h3 className="text-lg font-semibold text-zinc-900">3. Create actual combinations</h3>
               <p className="mt-1 text-sm text-zinc-600">Choose exactly one existing value from every axis. Combinations are never generated automatically.</p>
             </div>
-            {configuration.axes.length === 0 || configuration.axes.some((axis) => axis.values.length === 0) ? (
+            {!structuralEditsAllowed ? (
+              <p className="rounded-lg bg-zinc-50 p-4 text-sm text-zinc-600">
+                {isPublished
+                  ? "Unpublish this product before creating new combinations."
+                  : "Publication state could not be confirmed. Combination creation remains locked until authoritative state is reloaded."}
+              </p>
+            ) : configuration.axes.length === 0 || configuration.axes.some((axis) => axis.values.length === 0) ? (
               <p className="rounded-lg bg-zinc-50 p-4 text-sm text-zinc-600">Add at least one value to every configured axis before creating a combination.</p>
             ) : configuration.variants.length >= 100 ? (
               <p className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800">This product has reached the 100-combination limit.</p>
@@ -1343,8 +1432,8 @@ export function ProductOptionsManager({
 
           <div className="space-y-4 border-t border-zinc-200 pt-6">
             <div>
-              <h3 className="text-lg font-semibold text-zinc-900">4. Manage draft inventory</h3>
-              <p className="mt-1 text-sm text-zinc-600">Stock updates use optimistic version checks. Every generic combination remains inactive.</p>
+              <h3 className="text-lg font-semibold text-zinc-900">4. Manage combination inventory</h3>
+              <p className="mt-1 text-sm text-zinc-600">Stock updates use optimistic version checks and remain available for draft and published products.</p>
             </div>
             {configuration.variants.length === 0 ? (
               <p className="rounded-lg bg-zinc-50 p-4 text-sm text-zinc-600">No explicit combinations yet.</p>
@@ -1358,9 +1447,9 @@ export function ProductOptionsManager({
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <h4 className="font-semibold text-zinc-900">{label}</h4>
-                          <p className="mt-1 text-xs text-zinc-500">Draft · ID {variant.id.slice(0, 8)} · version {variant.stock_version}</p>
+                          <p className="mt-1 text-xs text-zinc-500">{variant.is_active ? "Published" : "Draft"} · ID {variant.id.slice(0, 8)} · version {variant.stock_version}</p>
                         </div>
-                        <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">Inactive</span>
+                        <span className={cn("rounded-full px-2 py-1 text-xs font-medium", variant.is_active ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800")}>{variant.is_active ? "Active" : "Inactive"}</span>
                       </div>
                       {editingStock ? (
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -1372,7 +1461,9 @@ export function ProductOptionsManager({
                         <div className="mt-4 flex flex-wrap items-center gap-2">
                           <span className="mr-auto text-sm font-medium text-zinc-700">Stock: {variant.stock}</span>
                           <Button type="button" size="sm" variant="outline" onClick={() => { setEditingStockId(variant.id); setStockDraft(String(variant.stock)) }} disabled={Boolean(pendingOperation)} className="rounded-lg border-zinc-200"><Pencil className="size-3.5" /> Edit stock</Button>
-                          <Button type="button" size="sm" variant="outline" onClick={() => setDeleteTarget({ kind: "variant", variant, label })} disabled={Boolean(pendingOperation)} className="rounded-lg border-red-200 text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" /> Delete</Button>
+                          {structuralEditsAllowed ? (
+                            <Button type="button" size="sm" variant="outline" onClick={() => setDeleteTarget({ kind: "variant", variant, label })} disabled={Boolean(pendingOperation)} className="rounded-lg border-red-200 text-red-600 hover:bg-red-50"><Trash2 className="size-3.5" /> Delete</Button>
+                          ) : null}
                         </div>
                       )}
                     </article>
@@ -1384,7 +1475,7 @@ export function ProductOptionsManager({
         </div>
       )}
 
-      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !pendingOperation) setDeleteTarget(null) }}>
+      <Dialog open={structuralEditsAllowed && Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !pendingOperation) setDeleteTarget(null) }}>
         <DialogContent className="bg-white shadow-2xl">
           <DialogHeader>
             <DialogTitle>Delete {deleteTarget?.kind ?? "item"}?</DialogTitle>

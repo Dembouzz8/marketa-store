@@ -160,6 +160,16 @@ export function parseVariantStock(value: string): number | null {
   }
 }
 
+export function canEditLegacyVariantStructure(
+  parentActive: unknown,
+  variantStates: unknown[]
+) {
+  return (
+    parentActive === false &&
+    variantStates.every((variantActive) => variantActive === false)
+  )
+}
+
 function feedbackClass(tone: Feedback["tone"]) {
   if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-800"
   if (tone === "error") return "border-red-200 bg-red-50 text-red-700"
@@ -204,8 +214,27 @@ export function ProductVariantsManager({
 
   const mode = product.variant_mode ?? "none"
   if (mode === "options") return null
+  const hasAuthoritativePublicationState =
+    typeof product.is_active === "boolean" &&
+    variants.every((variant) => typeof variant.is_active === "boolean")
+  const allVariantsPublished = variants.every(
+    (variant) => variant.is_active === true
+  )
+  const structuralEditsAllowed = canEditLegacyVariantStructure(
+    product.is_active,
+    variants.map((variant) => variant.is_active)
+  )
+  const publicationState =
+    hasAuthoritativePublicationState &&
+    product.is_active === true &&
+    allVariantsPublished
+      ? "published"
+      : structuralEditsAllowed
+        ? "draft"
+        : "unavailable"
+  const isPublished = publicationState === "published"
   const isEligibleByVisibleState =
-    mode === "none" && product.is_active === false && product.stock === 0
+    mode === "none" && structuralEditsAllowed && product.stock === 0
 
   const refreshVariants = async () => {
     const { data, error } = await supabase
@@ -230,6 +259,7 @@ export function ProductVariantsManager({
   const configureMode = async () => {
     if (
       !isEligibleByVisibleState ||
+      !structuralEditsAllowed ||
       !modeConfirmed ||
       configurationUncertain ||
       pendingOperation
@@ -290,7 +320,7 @@ export function ProductVariantsManager({
 
   const createVariant = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (mode === "none" || pendingOperation) return
+    if (mode === "none" || !structuralEditsAllowed || pendingOperation) return
 
     const labelResult = validateVariantLabels(mode, createSize, createColour)
     const stock = parseVariantStock(createStock)
@@ -352,6 +382,7 @@ export function ProductVariantsManager({
   }
 
   const beginLabelEdit = (variant: ProductVariant) => {
+    if (!structuralEditsAllowed) return
     setEditingLabelsId(variant.id)
     setSizeDraft(variant.size ?? "")
     setColourDraft(variant.colour ?? "")
@@ -359,7 +390,7 @@ export function ProductVariantsManager({
   }
 
   const updateLabels = async (variant: ProductVariant) => {
-    if (mode === "none" || pendingOperation) return
+    if (mode === "none" || !structuralEditsAllowed || pendingOperation) return
 
     const labelResult = validateVariantLabels(mode, sizeDraft, colourDraft)
     if (!labelResult.ok) {
@@ -481,7 +512,7 @@ export function ProductVariantsManager({
   }
 
   const deleteVariant = async (variant: ProductVariant) => {
-    if (pendingOperation) return
+    if (!structuralEditsAllowed || pendingOperation) return
 
     setPendingOperation(`delete:${variant.id}`)
     setFeedback(null)
@@ -651,63 +682,84 @@ export function ProductVariantsManager({
             <span className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold text-white">
               {modeLabels[mode]}
             </span>
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
-              Draft only
+            <span
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-semibold",
+                publicationState === "published"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : publicationState === "draft"
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-zinc-100 text-zinc-600"
+              )}
+            >
+              {publicationState === "published"
+                ? "Published"
+                : publicationState === "draft"
+                  ? "Draft"
+                  : "State unavailable"}
             </span>
           </div>
 
-          <form
-            onSubmit={createVariant}
-            className="space-y-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4"
-          >
-            <h3 className="font-medium text-zinc-900">Add combination</h3>
-            <div className="grid gap-4 sm:grid-cols-3">
-              {mode !== "colour" && (
-                <label>
-                  <span className="mb-1 block text-sm text-zinc-700">Size</span>
-                  <Input
-                    value={createSize}
-                    maxLength={MAX_LABEL_LENGTH}
-                    onChange={(event) => setCreateSize(event.target.value)}
-                    disabled={Boolean(pendingOperation)}
-                    className="h-10 rounded-lg border-zinc-200"
-                  />
-                </label>
-              )}
-              {mode !== "size" && (
-                <label>
-                  <span className="mb-1 block text-sm text-zinc-700">Colour</span>
-                  <Input
-                    value={createColour}
-                    maxLength={MAX_LABEL_LENGTH}
-                    onChange={(event) => setCreateColour(event.target.value)}
-                    disabled={Boolean(pendingOperation)}
-                    className="h-10 rounded-lg border-zinc-200"
-                  />
-                </label>
-              )}
-              <label>
-                <span className="mb-1 block text-sm text-zinc-700">Stock</span>
-                <Input
-                  inputMode="numeric"
-                  value={createStock}
-                  onChange={(event) => setCreateStock(event.target.value)}
-                  disabled={Boolean(pendingOperation)}
-                  className="h-10 rounded-lg border-zinc-200"
-                />
-              </label>
-            </div>
-            <Button
-              type="submit"
-              disabled={Boolean(pendingOperation)}
-              className="rounded-lg bg-zinc-900 text-white hover:bg-zinc-700"
+          {structuralEditsAllowed ? (
+            <form
+              onSubmit={createVariant}
+              className="space-y-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4"
             >
-              {pendingOperation === "create" && (
-                <Loader2 className="size-4 animate-spin" />
-              )}
-              Add combination
-            </Button>
-          </form>
+              <h3 className="font-medium text-zinc-900">Add combination</h3>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {mode !== "colour" && (
+                  <label>
+                    <span className="mb-1 block text-sm text-zinc-700">Size</span>
+                    <Input
+                      value={createSize}
+                      maxLength={MAX_LABEL_LENGTH}
+                      onChange={(event) => setCreateSize(event.target.value)}
+                      disabled={Boolean(pendingOperation)}
+                      className="h-10 rounded-lg border-zinc-200"
+                    />
+                  </label>
+                )}
+                {mode !== "size" && (
+                  <label>
+                    <span className="mb-1 block text-sm text-zinc-700">Colour</span>
+                    <Input
+                      value={createColour}
+                      maxLength={MAX_LABEL_LENGTH}
+                      onChange={(event) => setCreateColour(event.target.value)}
+                      disabled={Boolean(pendingOperation)}
+                      className="h-10 rounded-lg border-zinc-200"
+                    />
+                  </label>
+                )}
+                <label>
+                  <span className="mb-1 block text-sm text-zinc-700">Stock</span>
+                  <Input
+                    inputMode="numeric"
+                    value={createStock}
+                    onChange={(event) => setCreateStock(event.target.value)}
+                    disabled={Boolean(pendingOperation)}
+                    className="h-10 rounded-lg border-zinc-200"
+                  />
+                </label>
+              </div>
+              <Button
+                type="submit"
+                disabled={Boolean(pendingOperation)}
+                className="rounded-lg bg-zinc-900 text-white hover:bg-zinc-700"
+              >
+                {pendingOperation === "create" && (
+                  <Loader2 className="size-4 animate-spin" />
+                )}
+                Add combination
+              </Button>
+            </form>
+          ) : (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              {isPublished
+                ? "Unpublish this product before adding, renaming, or deleting combinations. Published combination stock can still be updated below."
+                : "Publication state could not be confirmed. Structural changes are locked until authoritative state is reloaded."}
+            </p>
+          )}
 
           <div className="space-y-3">
             <h3 className="font-medium text-zinc-900">
@@ -732,7 +784,8 @@ export function ProductVariantsManager({
                         Stock {variant.stock} · Version {variant.stock_version}
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    {structuralEditsAllowed && (
+                      <div className="flex gap-2">
                       <button
                         type="button"
                         onClick={() => beginLabelEdit(variant)}
@@ -751,10 +804,11 @@ export function ProductVariantsManager({
                       >
                         <Trash2 className="size-4" />
                       </button>
-                    </div>
+                      </div>
+                    )}
                   </div>
 
-                  {editingLabelsId === variant.id && (
+                  {structuralEditsAllowed && editingLabelsId === variant.id && (
                     <div className="grid gap-3 rounded-lg bg-zinc-50 p-3 sm:grid-cols-[1fr_1fr_auto]">
                       {mode !== "colour" ? (
                         <Input
@@ -848,7 +902,7 @@ export function ProductVariantsManager({
                     </Button>
                   )}
 
-                  {deleteTargetId === variant.id && (
+                  {structuralEditsAllowed && deleteTargetId === variant.id && (
                     <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
                       <p>
                         Delete this combination? Referenced historical

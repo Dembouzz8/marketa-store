@@ -56,6 +56,14 @@ function getVariantModeLabel(mode: ProductVariantMode) {
   return "Ordinary"
 }
 
+export function getVariantPublicationState(
+  isActive: unknown
+): "draft" | "published" | "unavailable" {
+  if (isActive === true) return "published"
+  if (isActive === false) return "draft"
+  return "unavailable"
+}
+
 export function ProductsTable({
   products,
   canManage,
@@ -234,6 +242,9 @@ export function ProductsTable({
               {filteredProducts.map((product) => {
                 const variantMode = getVariantMode(product)
                 const isVariantProduct = variantMode !== "none"
+                const variantPublicationState = getVariantPublicationState(
+                  product.is_active
+                )
 
                 return (
                 <tr key={product.id} className="border-b border-zinc-100">
@@ -257,7 +268,15 @@ export function ProductsTable({
                           )}
                         >
                           {getVariantModeLabel(variantMode)}
-                          {isVariantProduct ? " · Draft only" : ""}
+                          {isVariantProduct
+                            ? ` · ${
+                                variantPublicationState === "published"
+                                  ? "Published"
+                                  : variantPublicationState === "draft"
+                                    ? "Draft"
+                                    : "State unavailable"
+                              }`
+                            : ""}
                         </span>
                       </div>
                     </div>
@@ -322,8 +341,21 @@ export function ProductsTable({
                   </td>
                   <td className="px-3 py-4">
                     {isVariantProduct ? (
-                      <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        Draft only
+                      <span
+                        className={cn(
+                          "inline-flex rounded-full px-2.5 py-1 text-xs font-medium",
+                          variantPublicationState === "published"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : variantPublicationState === "draft"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-zinc-100 text-zinc-600"
+                        )}
+                      >
+                        {variantPublicationState === "published"
+                          ? "Published"
+                          : variantPublicationState === "draft"
+                            ? "Draft"
+                            : "State unavailable"}
                       </span>
                     ) : canManage ? (
                       <button

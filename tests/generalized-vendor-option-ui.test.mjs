@@ -140,7 +140,19 @@ test("canonical categories and templates come only from reference data", () => {
 test("configuration preserves visible and server-authoritative eligibility", () => {
   assert.match(
     manager,
-    /visibleMode === "none"[\s\S]*product\.is_active === false[\s\S]*product\.stock === 0/
+    /export function canEditUniversalOptionStructure[\s\S]*getUniversalOptionPublicationState\([\s\S]*=== "draft"/
+  )
+  assert.match(
+    manager,
+    /const structuralEditsAllowed = canEditUniversalOptionStructure\([\s\S]*product\.is_active[\s\S]*configuration\?\.is_active[\s\S]*variantPublicationStates/
+  )
+  assert.match(
+    manager,
+    /visibleMode === "none" &&\s*structuralEditsAllowed &&\s*product\.stock === 0/
+  )
+  assert.match(
+    manager,
+    /!eligibleByVisibleState \|\|\s*!structuralEditsAllowed \|\|\s*!configurationConfirmed/
   )
   assert.match(manager, /p_product_id: product\.id, p_category_code: categoryCode/)
   for (const outcome of [
@@ -285,7 +297,14 @@ test("inventory updates send stock_version and refresh authoritative state", () 
 })
 
 test("variant deletion is confirmed and version guarded", () => {
-  assert.match(manager, /<Dialog open=\{Boolean\(deleteTarget\)\}/)
+  assert.match(
+    manager,
+    /if \(!structuralEditsAllowed \|\| !deleteTarget\) return/
+  )
+  assert.match(
+    manager,
+    /<Dialog open=\{structuralEditsAllowed && Boolean\(deleteTarget\)\}/
+  )
   assert.match(manager, /kind: "variant", variant, label/)
   assert.match(
     manager,
@@ -331,7 +350,7 @@ test("legacy modes and ordinary product management remain available", () => {
   assert.match(productsTable, /if \(mode === "colour"\)/)
 })
 
-test("B3 introduces no customer purchasing publication or payment behavior", () => {
+test("D5-2A introduces no customer purchasing, publication mutation, or payment behavior", () => {
   const changedUi = [manager, editPage, productForm, productsTable].join("\n")
   for (const excluded of [
     "handle-checkout",
@@ -342,6 +361,10 @@ test("B3 introduces no customer purchasing publication or payment behavior", () 
   ]) {
     assert.equal(changedUi.toLowerCase().includes(excluded), false, excluded)
   }
-  assert.match(manager, /Customer purchasing and publication\s+remain unavailable/)
+  assert.match(
+    manager,
+    /Publication state is read-only here,[\s\S]*customer variant purchasing remains unavailable/
+  )
+  assert.doesNotMatch(changedUi, /set_vendor_product_variant_publication/)
   assert.doesNotMatch(manager, /is_active:\s*true/)
 })

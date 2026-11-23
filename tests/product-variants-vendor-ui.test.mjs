@@ -116,11 +116,15 @@ test("vendor-only types mirror product and product-variant authority", () => {
 test("configuration requires visible draft eligibility and irreversible confirmation", () => {
   assert.match(
     manager,
-    /mode === "none" && product\.is_active === false && product\.stock === 0/
+    /export function canEditLegacyVariantStructure[\s\S]*parentActive === false &&[\s\S]*variantStates\.every\(\(variantActive\) => variantActive === false\)/
   )
   assert.match(
     manager,
-    /!isEligibleByVisibleState \|\|\s*!modeConfirmed \|\|\s*configurationUncertain \|\|\s*pendingOperation/
+    /mode === "none" && structuralEditsAllowed && product\.stock === 0/
+  )
+  assert.match(
+    manager,
+    /!isEligibleByVisibleState \|\|\s*!structuralEditsAllowed \|\|\s*!modeConfirmed \|\|\s*configurationUncertain \|\|\s*pendingOperation/
   )
   assert.match(manager, /cannot currently\s+be changed or reverted/)
   assert.match(manager, /!modeConfirmed/)
@@ -338,11 +342,29 @@ test("variant reads and writes use the authenticated SSR browser session", () =>
 test("variant parents have no ordinary stock publication or parent-delete controls", () => {
   assert.match(productsTable, /const isVariantProduct = variantMode !== "none"/)
   assert.match(productsTable, /isVariantProduct \? \([\s\S]*Managed per combination/)
-  assert.match(productsTable, /isVariantProduct \? \([\s\S]*Draft only/)
+  assert.match(
+    productsTable,
+    /export function getVariantPublicationState[\s\S]*if \(isActive === true\) return "published"[\s\S]*if \(isActive === false\) return "draft"[\s\S]*return "unavailable"/
+  )
+  assert.match(
+    productsTable,
+    /variantPublicationState === "published"[\s\S]*"Published"[\s\S]*variantPublicationState === "draft"[\s\S]*"Draft"[\s\S]*"State unavailable"/
+  )
+  assert.match(
+    productsTable,
+    /\) : canManage \? \([\s\S]*aria-label="Toggle product status"/
+  )
   assert.match(productsTable, /\{!isVariantProduct && \([\s\S]*setDeleteTarget\(product\)/)
   assert.match(productForm, /const isVariantProduct = Boolean/)
   assert.match(productForm, /Managed per size or colour combination/)
-  assert.match(productForm, /Draft only — variant publication is not available yet/)
+  assert.match(
+    productForm,
+    /export function getVariantFormPublicationState[\s\S]*if \(isActive === true\) return "published"[\s\S]*if \(isActive === false\) return "draft"[\s\S]*return "unavailable"/
+  )
+  assert.match(
+    productForm,
+    /variantPublicationState === "published"[\s\S]*"Published"[\s\S]*variantPublicationState === "draft"[\s\S]*"Draft"[\s\S]*"State unavailable"/
+  )
   assert.match(
     productForm,
     /\.\.\.\(isVariantProduct\s*\? \{\}\s*: \{\s*stock: Number\(stock\),\s*is_active: isActive/

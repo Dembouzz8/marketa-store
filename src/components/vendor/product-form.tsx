@@ -50,6 +50,14 @@ function getImageExtension(mimeType: string) {
   return imageExtensions[mimeType as keyof typeof imageExtensions] ?? null
 }
 
+export function getVariantFormPublicationState(
+  isActive: unknown
+): "draft" | "published" | "unavailable" {
+  if (isActive === true) return "published"
+  if (isActive === false) return "draft"
+  return "unavailable"
+}
+
 type ProductImageItem =
   | {
       id: string
@@ -67,6 +75,9 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const isVariantProduct = Boolean(
     product?.variant_mode && product.variant_mode !== "none"
+  )
+  const variantPublicationState = getVariantFormPublicationState(
+    product?.is_active
   )
   const [name, setName] = useState(product?.name ?? "")
   const [description, setDescription] = useState(product?.description ?? "")
@@ -396,8 +407,30 @@ export function ProductForm({ product, vendorId, onSuccess }: ProductFormProps) 
             Status
           </span>
           {isVariantProduct ? (
-            <div className="flex h-11 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-sm font-medium text-amber-800">
-              Draft only — variant publication is not available yet
+            <div
+              className={cn(
+                "min-h-11 rounded-lg border px-3 py-2 text-sm",
+                variantPublicationState === "published"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : variantPublicationState === "draft"
+                    ? "border-amber-200 bg-amber-50 text-amber-800"
+                    : "border-zinc-200 bg-zinc-50 text-zinc-600"
+              )}
+            >
+              <span className="block font-medium">
+                {variantPublicationState === "published"
+                  ? "Published"
+                  : variantPublicationState === "draft"
+                    ? "Draft"
+                    : "State unavailable"}
+              </span>
+              <span className="mt-0.5 block text-xs">
+                {variantPublicationState === "published"
+                  ? "Publication management is handled separately. Unpublish this product before changing its variant structure."
+                  : variantPublicationState === "draft"
+                    ? "Publication management is handled separately."
+                    : "Publication state could not be confirmed. Structural variant changes remain unavailable."}
+              </span>
             </div>
           ) : (
             <button
