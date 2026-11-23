@@ -4,8 +4,36 @@ import { redirect } from "next/navigation"
 import { ProductOptionsManager } from "@/components/vendor/product-options-manager"
 import { ProductForm } from "@/components/vendor/product-form"
 import { ProductVariantsManager } from "@/components/vendor/product-variants-manager"
+import {
+  VariantPublicationPanel,
+  type VariantPublicationState,
+} from "@/components/vendor/variant-publication-panel"
 import { createSupabaseServerClient } from "@/lib/supabase-server"
 import type { ProductVariant, VendorProduct } from "@/types"
+
+function getPublicationState(
+  product: VendorProduct,
+  variants: ProductVariant[],
+  variantsLoadFailed: boolean
+): VariantPublicationState {
+  if (
+    variantsLoadFailed ||
+    typeof product.is_active !== "boolean" ||
+    variants.some((variant) => typeof variant.is_active !== "boolean")
+  ) {
+    return "unavailable"
+  }
+
+  if (product.is_active) {
+    return variants.length > 0 && variants.every((variant) => variant.is_active)
+      ? "published"
+      : "unavailable"
+  }
+
+  return variants.every((variant) => !variant.is_active)
+    ? "draft"
+    : "unavailable"
+}
 
 export default async function EditProductPage({
   params,
@@ -83,6 +111,14 @@ export default async function EditProductPage({
     ])
 
   const variants = (variantsResponse.data ?? []) as ProductVariant[]
+  const isVariantProduct = product.variant_mode !== "none"
+  const publicationUiEnabled =
+    process.env.VARIANT_PUBLICATION_UI_ENABLED === "true"
+  const publicationState = getPublicationState(
+    product,
+    variants,
+    Boolean(variantsResponse.error)
+  )
 
   async function handleSuccess() {
     "use server"
@@ -103,6 +139,15 @@ export default async function EditProductPage({
         vendorId={vendor.id}
         onSuccess={handleSuccess}
       />
+      {isVariantProduct ? (
+        <VariantPublicationPanel
+          productId={product.id}
+          publicationState={publicationState}
+          enabled={publicationUiEnabled}
+          combinationCount={variants.length}
+          hasAvailableStock={variants.some((variant) => variant.stock > 0)}
+        />
+      ) : null}
       {product.variant_mode !== "options" ? (
         <ProductVariantsManager
           key={`legacy:${product.id}:${product.variant_mode}`}

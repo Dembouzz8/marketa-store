@@ -15,6 +15,10 @@ const legacyManagerFile =
   "src/components/vendor/product-variants-manager.tsx"
 const optionsManagerFile =
   "src/components/vendor/product-options-manager.tsx"
+const publicationPanelFile =
+  "src/components/vendor/variant-publication-panel.tsx"
+const publicationActionFile = "src/lib/vendor/variant-publication.ts"
+const editPageFile = "src/app/vendor/products/[id]/edit/page.tsx"
 
 const sources = {
   productsTable: read(productsTableFile),
@@ -82,7 +86,12 @@ const uiMocks = {
   "@/components/ui/use-toast": { toast() {} },
 }
 
-function loadComponent(file, extraMocks = {}) {
+function loadComponent(
+  file,
+  extraMocks = {},
+  reactImplementation = reactMock,
+  extraGlobals = {}
+) {
   const source = read(file)
   const output = ts.transpileModule(source, {
     compilerOptions: {
@@ -94,7 +103,7 @@ function loadComponent(file, extraMocks = {}) {
   }).outputText
   const compiledModule = { exports: {} }
   const mocks = {
-    react: reactMock,
+    react: reactImplementation,
     "react/jsx-runtime": jsxRuntime,
     "next/link": { __esModule: true, default: "link" },
     "next/navigation": { useRouter: () => ({ refresh() {} }) },
@@ -124,11 +133,124 @@ function loadComponent(file, extraMocks = {}) {
         throw new Error(`Unexpected module: ${specifier}`)
       },
       console,
+      process,
+      ...extraGlobals,
     },
     { filename: file }
   )
 
   return compiledModule.exports
+}
+
+function createStatefulReact() {
+  const states = []
+  const refs = []
+  let stateIndex = 0
+  let refIndex = 0
+
+  return {
+    beginRender() {
+      stateIndex = 0
+      refIndex = 0
+    },
+    react: {
+      useEffect() {},
+      useMemo: (factory) => factory(),
+      useRef(initial) {
+        const index = refIndex++
+        refs[index] ??= { current: initial }
+        return refs[index]
+      },
+      useState(initial) {
+        const index = stateIndex++
+        if (!(index in states)) {
+          states[index] = typeof initial === "function" ? initial() : initial
+        }
+        return [
+          states[index],
+          (value) => {
+            states[index] =
+              typeof value === "function" ? value(states[index]) : value
+          },
+        ]
+      },
+      useTransition: () => [false, (callback) => callback()],
+    },
+  }
+}
+
+function publicationActionHarness({
+  gate = "true",
+  user = { id: "77777777-7777-4777-8777-777777777777" },
+  userError = null,
+  rpcData = null,
+  rpcError = null,
+  clientError = null,
+} = {}) {
+  const calls = {
+    createClient: 0,
+    rpc: [],
+    revalidate: [],
+  }
+  const supabase = {
+    auth: {
+      getUser: async () => ({ data: { user }, error: userError }),
+    },
+    rpc: async (...args) => {
+      calls.rpc.push(args)
+      return { data: rpcData, error: rpcError }
+    },
+  }
+  const loadedModule = loadComponent(
+    publicationActionFile,
+    {
+      "next/cache": {
+        revalidatePath(pathname) {
+          calls.revalidate.push(pathname)
+        },
+      },
+      "@/lib/supabase-server": {
+        async createSupabaseServerClient() {
+          calls.createClient += 1
+          if (clientError) throw clientError
+          return supabase
+        },
+      },
+    },
+    reactMock,
+    {
+      process: {
+        env:
+          gate === null
+            ? {}
+            : { VARIANT_PUBLICATION_UI_ENABLED: gate },
+      },
+    }
+  )
+
+  return {
+    action: loadedModule.setVariantProductPublication,
+    calls,
+  }
+}
+
+const publicationProductId = "11111111-1111-4111-8111-111111111111"
+
+function publicationRow(outcome, active, productId = publicationProductId) {
+  return [
+    {
+      outcome,
+      publication_product_id: productId,
+      publication_active: active,
+    },
+  ]
+}
+
+function buttonWithText(tree, label) {
+  return nodes(
+    tree,
+    (node) => node.type === "button" && textContent(node).trim() === label
+  )
 }
 
 function product(overrides = {}) {
@@ -409,7 +531,7 @@ test("published universal options block structure while preserving stock CAS con
   assert.match(textContent(draft), /Edit stock/)
 })
 
-test("stock CAS and conflict safeguards remain while publication authority is absent", () => {
+test("D5-2A structural and stock safeguards remain isolated from publication authority", () => {
   assert.match(
     sources.legacyManager,
     /update_vendor_product_variant_stock[\s\S]*p_expected_stock_version: variant\.stock_version/
@@ -431,4 +553,381 @@ test("stock CAS and conflict safeguards remain while publication authority is ab
 
   const checkout = read("supabase/functions/handle-checkout/index.ts")
   assert.match(checkout, /const VARIANT_CHECKOUT_ENABLED = false/)
+})
+
+test("publication server gate fails closed before client creation or RPC invocation", async () => {
+  for (const gate of [null, "false", "TRUE", "1"]) {
+    const { action, calls } = publicationActionHarness({ gate })
+    const result = await action(publicationProductId, true)
+
+    assert.equal(result.status, "error")
+    assert.equal(result.outcome, "gate_disabled")
+    assert.equal(calls.createClient, 0)
+    assert.equal(calls.rpc.length, 0)
+  }
+})
+
+test("publication action revalidates the authenticated session", async () => {
+  for (const authentication of [
+    { user: null, userError: null },
+    { user: null, userError: { message: "expired" } },
+  ]) {
+    const { action, calls } = publicationActionHarness(authentication)
+    const result = await action(publicationProductId, true)
+
+    assert.equal(result.status, "error")
+    assert.equal(result.outcome, "access_denied")
+    assert.equal(calls.createClient, 1)
+    assert.equal(calls.rpc.length, 0)
+  }
+})
+
+test("publication action validates inputs and invokes the exact RPC once", async () => {
+  for (const [productId, active] of [
+    ["not-a-uuid", true],
+    [publicationProductId, "true"],
+  ]) {
+    const invalid = publicationActionHarness()
+    const result = await invalid.action(productId, active)
+    assert.equal(result.outcome, "invalid_input")
+    assert.equal(invalid.calls.createClient, 0)
+    assert.equal(invalid.calls.rpc.length, 0)
+  }
+
+  const { action, calls } = publicationActionHarness({
+    rpcData: publicationRow("published", true),
+  })
+  const result = await action(publicationProductId, true)
+
+  assert.equal(result.status, "success")
+  assert.equal(result.outcome, "published")
+  assert.equal(calls.rpc.length, 1)
+  assert.equal(calls.rpc[0][0], "set_vendor_product_variant_publication")
+  assert.equal(calls.rpc[0][1].p_product_id, publicationProductId)
+  assert.equal(calls.rpc[0][1].p_active, true)
+  assert.equal(Object.keys(calls.rpc[0][1]).length, 2)
+})
+
+test("confirmed publication outcomes require exact ID and active state", async () => {
+  for (const scenario of [
+    { requested: true, outcome: "published", active: true },
+    { requested: false, outcome: "deactivated", active: false },
+    { requested: true, outcome: "no_change", active: true },
+    { requested: false, outcome: "no_change", active: false },
+  ]) {
+    const { action, calls } = publicationActionHarness({
+      rpcData: publicationRow(scenario.outcome, scenario.active),
+    })
+    const result = await action(publicationProductId, scenario.requested)
+
+    assert.equal(result.status, "success")
+    assert.equal(result.outcome, scenario.outcome)
+    assert.equal(result.productId, publicationProductId)
+    assert.equal(result.active, scenario.requested)
+    assert.deepEqual(calls.revalidate, [
+      `/vendor/products/${publicationProductId}/edit`,
+      "/vendor/products",
+    ])
+  }
+})
+
+test("controlled publication failures remain non-successful and sanitized", async () => {
+  for (const outcome of [
+    "release_disabled",
+    "invalid_state",
+    "access_denied",
+    "not_found",
+    "invalid_input",
+    "operation_failed",
+  ]) {
+    const { action, calls } = publicationActionHarness({
+      rpcData: publicationRow(outcome, false),
+    })
+    const result = await action(publicationProductId, true)
+
+    assert.equal(result.status, "error")
+    assert.equal(result.outcome, outcome)
+    assert.equal(calls.rpc.length, 1)
+    assert.equal(calls.revalidate.length, 0)
+    if (outcome === "release_disabled") {
+      assert.match(result.message, /not available yet/i)
+      assert.doesNotMatch(result.message, /will be available|coming soon/i)
+    }
+  }
+
+  const databaseFailure = publicationActionHarness({
+    rpcError: { message: "sensitive database detail" },
+  })
+  const databaseResult = await databaseFailure.action(publicationProductId, true)
+  assert.equal(databaseResult.outcome, "operation_failed")
+  assert.doesNotMatch(databaseResult.message, /sensitive database detail/)
+
+  const clientFailure = publicationActionHarness({
+    clientError: new Error("sensitive client detail"),
+  })
+  const clientResult = await clientFailure.action(publicationProductId, true)
+  assert.equal(clientResult.outcome, "operation_failed")
+  assert.doesNotMatch(clientResult.message, /sensitive client detail/)
+})
+
+test("malformed ambiguous or mismatched RPC responses fail closed", async () => {
+  const malformedResponses = [
+    null,
+    [],
+    [
+      ...publicationRow("published", true),
+      ...publicationRow("published", true),
+    ],
+    [{ outcome: "unexpected", publication_product_id: publicationProductId, publication_active: true }],
+    publicationRow(
+      "published",
+      true,
+      "99999999-9999-4999-8999-999999999999"
+    ),
+    publicationRow("published", false),
+    publicationRow("deactivated", true),
+  ]
+
+  for (const rpcData of malformedResponses) {
+    const { action, calls } = publicationActionHarness({ rpcData })
+    const result = await action(publicationProductId, true)
+
+    assert.equal(result.status, "error")
+    assert.equal(result.outcome, "unconfirmed")
+    assert.equal(calls.revalidate.length, 0)
+  }
+})
+
+test("server rendering gate and ordinary-product exclusion are explicit", () => {
+  const page = read(editPageFile)
+  const action = read(publicationActionFile)
+  const panel = read(publicationPanelFile)
+
+  assert.match(
+    page,
+    /process\.env\.VARIANT_PUBLICATION_UI_ENABLED === "true"/
+  )
+  assert.match(page, /const isVariantProduct = product\.variant_mode !== "none"/)
+  assert.match(page, /\{isVariantProduct \? \([\s\S]*<VariantPublicationPanel/)
+  assert.match(
+    action,
+    /process\.env\.VARIANT_PUBLICATION_UI_ENABLED !== "true"[\s\S]*gate_disabled/
+  )
+  assert.doesNotMatch(
+    [page, action, panel].join("\n"),
+    /NEXT_PUBLIC_VARIANT_PUBLICATION|supabaseAdmin|SUPABASE_SERVICE_ROLE_KEY|service_role/
+  )
+  assert.equal(
+    (action.match(/"set_vendor_product_variant_publication"/g) ?? []).length,
+    1
+  )
+  assert.doesNotMatch(action, /\.from\("products"\)[\s\S]*\.update\(/)
+  assert.doesNotMatch(action, /\.from\("product_variants"\)[\s\S]*\.update\(/)
+})
+
+test("publication panel shows authoritative states and hides disabled controls", () => {
+  const actionMock = {
+    setVariantProductPublication: async () => {
+      throw new Error("disabled controls must not call the action")
+    },
+  }
+  const { VariantPublicationPanel } = loadComponent(publicationPanelFile, {
+    "@/lib/vendor/variant-publication": actionMock,
+  })
+  const baseProps = {
+    productId: publicationProductId,
+    combinationCount: 2,
+    hasAvailableStock: true,
+  }
+  const disabled = VariantPublicationPanel({
+    ...baseProps,
+    publicationState: "draft",
+    enabled: false,
+  })
+  const unavailable = VariantPublicationPanel({
+    ...baseProps,
+    publicationState: "unavailable",
+    enabled: true,
+  })
+  const draft = VariantPublicationPanel({
+    ...baseProps,
+    publicationState: "draft",
+    enabled: true,
+  })
+  const published = VariantPublicationPanel({
+    ...baseProps,
+    publicationState: "published",
+    enabled: true,
+  })
+
+  assert.match(textContent(disabled), /Draft/)
+  assert.match(textContent(disabled), /Publication controls are not enabled/)
+  assert.equal(buttonWithText(disabled, "Publish Product").length, 0)
+  assert.equal(buttonWithText(disabled, "Unpublish Product").length, 0)
+  assert.match(textContent(unavailable), /State unavailable/)
+  assert.equal(buttonWithText(unavailable, "Publish Product").length, 0)
+  assert.equal(buttonWithText(unavailable, "Unpublish Product").length, 0)
+  assert.equal(buttonWithText(draft, "Publish Product").length, 1)
+  assert.match(textContent(published), /Published/)
+  assert.equal(buttonWithText(published, "Unpublish Product").length >= 1, true)
+})
+
+test("publish confirmation blocks rapid duplicates and refreshes authoritative state", async () => {
+  const harness = createStatefulReact()
+  let resolveAction
+  let actionCalls = 0
+  let refreshCalls = 0
+  const actionPromise = new Promise((resolve) => {
+    resolveAction = resolve
+  })
+  const loadedModule = loadComponent(
+    publicationPanelFile,
+    {
+      "next/navigation": {
+        useRouter: () => ({
+          refresh() {
+            refreshCalls += 1
+          },
+        }),
+      },
+      "@/lib/vendor/variant-publication": {
+        setVariantProductPublication: async (productId, active) => {
+          actionCalls += 1
+          assert.equal(productId, publicationProductId)
+          assert.equal(active, true)
+          return actionPromise
+        },
+      },
+    },
+    harness.react
+  )
+  const render = () => {
+    harness.beginRender()
+    return loadedModule.VariantPublicationPanel({
+      productId: publicationProductId,
+      publicationState: "draft",
+      enabled: true,
+      combinationCount: 1,
+      hasAvailableStock: true,
+    })
+  }
+
+  let tree = render()
+  buttonWithText(tree, "Publish Product")[0].props.onClick()
+  tree = render()
+  const dialog = nodes(tree, (node) => node.type === "dialog")[0]
+  assert.equal(dialog.props.open, true)
+  assert.match(textContent(dialog), /Publish this product\?/)
+
+  const confirmation = buttonWithText(tree, "Publish Product").at(-1)
+  confirmation.props.onClick()
+  confirmation.props.onClick()
+  assert.equal(actionCalls, 1)
+
+  resolveAction({
+    status: "success",
+    outcome: "published",
+    message: "Product published.",
+    productId: publicationProductId,
+    active: true,
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  tree = render()
+
+  assert.equal(refreshCalls, 1)
+  assert.match(textContent(tree), /Product published\./)
+})
+
+test("published products require explicit unpublish confirmation", async () => {
+  const harness = createStatefulReact()
+  const requests = []
+  let refreshCalls = 0
+  const loadedModule = loadComponent(
+    publicationPanelFile,
+    {
+      "next/navigation": {
+        useRouter: () => ({ refresh: () => { refreshCalls += 1 } }),
+      },
+      "@/lib/vendor/variant-publication": {
+        async setVariantProductPublication(productId, active) {
+          requests.push({ productId, active })
+          return {
+            status: "success",
+            outcome: "deactivated",
+            message: "Product unpublished.",
+            productId,
+            active,
+          }
+        },
+      },
+    },
+    harness.react
+  )
+  const render = () => {
+    harness.beginRender()
+    return loadedModule.VariantPublicationPanel({
+      productId: publicationProductId,
+      publicationState: "published",
+      enabled: true,
+      combinationCount: 1,
+      hasAvailableStock: true,
+    })
+  }
+
+  let tree = render()
+  buttonWithText(tree, "Unpublish Product")[0].props.onClick()
+  tree = render()
+  const dialog = nodes(tree, (node) => node.type === "dialog")[0]
+  assert.equal(dialog.props.open, true)
+  assert.match(textContent(dialog), /Unpublish this product\?/)
+  buttonWithText(tree, "Unpublish Product").at(-1).props.onClick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].productId, publicationProductId)
+  assert.equal(requests[0].active, false)
+  assert.equal(refreshCalls, 1)
+})
+
+test("publication panel converts rejected action transport into controlled feedback", async () => {
+  const harness = createStatefulReact()
+  let refreshCalls = 0
+  const loadedModule = loadComponent(
+    publicationPanelFile,
+    {
+      "next/navigation": {
+        useRouter: () => ({ refresh: () => { refreshCalls += 1 } }),
+      },
+      "@/lib/vendor/variant-publication": {
+        async setVariantProductPublication() {
+          throw new Error("sensitive transport detail")
+        },
+      },
+    },
+    harness.react
+  )
+  const render = () => {
+    harness.beginRender()
+    return loadedModule.VariantPublicationPanel({
+      productId: publicationProductId,
+      publicationState: "draft",
+      enabled: true,
+      combinationCount: 1,
+      hasAvailableStock: true,
+    })
+  }
+
+  let tree = render()
+  buttonWithText(tree, "Publish Product")[0].props.onClick()
+  tree = render()
+  buttonWithText(tree, "Publish Product").at(-1).props.onClick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  tree = render()
+
+  assert.match(
+    textContent(tree),
+    /Unable to update publication right now\. Please try again\./
+  )
+  assert.doesNotMatch(textContent(tree), /sensitive transport detail/)
+  assert.equal(refreshCalls, 0)
 })
