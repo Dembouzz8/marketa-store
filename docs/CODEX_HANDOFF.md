@@ -1,21 +1,19 @@
 # Codex handoff — Marketa
 
-Snapshot: 2026-11-23. Recheck the repository, linked migrations, and live
+Snapshot: 2026-11-25. Recheck the repository, linked migrations, and live
 Supabase/Auth configuration before acting in a fresh conversation. The
 repository and applied migrations take precedence over this handoff.
 
 ## Repository checkpoint
 
 - Branch: `main`.
-- Pre-acceptance HEAD: `d4d8aa87fab3ce2d2b26e1ff162c01ae58c4a76a`.
-- The verified pre-acceptance working tree contained exactly two untracked D5-1
-  files: `supabase/migrations/20261117211005_add_secure_variant_publication_authority.sql`
-  (SHA-256 `cf695906cb388cf08c8eeb1f5bfadcd349c83493610151ed05ca154214932469`)
-  and `tests/variant-publication-authority.test.mjs` (SHA-256
-  `53661f783e7788bed5214842b19fe59079ed6f1b814de95bd8fa40724eb8d9a3`).
-- This acceptance closeout modifies only `README.md`, `STOREFRONT_V2.md`, and
-  `docs/CODEX_HANDOFF.md`; it leaves both D5-1 implementation files unchanged.
-  Nothing is staged, committed, pushed, migrated, or deployed by the closeout.
+- Reconciliation baseline HEAD: `79bbfd11bf78584f245e35e0e52fbd9677c10062`,
+  matching `origin/main` before this documentation update.
+- The canonical D5-1 migration is
+  `supabase/migrations/20261117211005_add_secure_variant_publication_authority.sql`
+  (SHA-256 `cf695906cb388cf08c8eeb1f5bfadcd349c83493610151ed05ca154214932469`).
+  The accepted focused test is `tests/variant-publication-authority.test.mjs`
+  (SHA-256 `53661f783e7788bed5214842b19fe59079ed6f1b814de95bd8fa40724eb8d9a3`).
 - All 14 accepted source hashes match the final acceptance checkpoint. The
   responsive vendor order list SHA-256 is
   `8de86d516d2395d8c4d7fab78a432aff4ce9b5f2774c870c39780217e4b50fc5`; the
@@ -24,8 +22,9 @@ repository and applied migrations take precedence over this handoff.
 - Universal Product Variants Batches 2C-B1, 2C-B2, 2C-C2, 2C-C3, 2C-D2, and
   2C-D3-A1 are applied to the linked production database through
   `20261106105539_add_public_product_variant_projection.sql`, and D4-3
-  `20261113092035_restrict_order_base_table_select.sql` is also applied. The
-  production ledger contains all 35 of 35 migrations.
+  `20261113092035_restrict_order_base_table_select.sql` and D5-1
+  `20261117211005_add_secure_variant_publication_authority.sql` are applied.
+  The production ledger contains all 36 canonical migrations.
 - Five Edge Functions are active: `handle-checkout`, `paystack-webhook`,
   `payment-status`, `initiate-vendor-provisioning`, and
   `dispatch-paid-order-outbox`. The dispatcher is active with
@@ -86,10 +85,10 @@ Ready Vercel deployment, and production smoke checks of vendor product lists,
 edit pages, the variants section, eligibility enforcement, ordinary-product
 controls, the customer catalogue, and existing product-detail pages.
 
-Customer-facing variant commerce remains deferred. Variant parents remain
-draft-only and cannot be published. Customer size or colour selection,
-variant-specific purchases, variant-aware cart and checkout, and variant-aware
-order and payment processing are not part of Batch 2B2.
+Customer-facing variant commerce remained deferred at Batch 2B2. Variant
+parents were draft-only and could not be published then. Customer size or
+colour selection, variant-specific purchases, variant-aware cart and checkout,
+and variant-aware order and payment processing were outside that batch.
 
 **Universal Product Variants Batches 2C-B1 and 2C-B2 are production-deployed
 for their approved database scopes.** B1 supplies the additive canonical
@@ -154,14 +153,14 @@ service-role-only `SECURITY DEFINER` authority. It performs trusted server-side
 order construction, creates immutable variant snapshots, and uses a private,
 single-use authorization for protected order-item insertion. Construction does
 not deduct stock or mutate payments, payment events, financial ledgers, or the
-paid-order outbox. The existing checkout Edge Function does not call this RPC;
-D2 is installed but dormant.
+paid-order outbox. The accepted D4-1 checkout handler now calls this RPC,
+while variant-bearing requests remain blocked by the checkout gate.
 
 The pre-D2 recovery checkpoint passed an application-database restore drill,
-not full Supabase platform recovery. Generic variant parents and variant rows
-remain draft-only under both publication constraints. True two-session
-active-variant races remain unverified and must be closed before customer
-variant purchasing is activated.
+not full Supabase platform recovery. At D2 acceptance, generic variant
+parents and rows were draft-only under both publication constraints, and true
+two-session active-variant races were unverified. D5-1 later passed all eight
+concurrency races; customer variant purchasing remains disabled.
 
 **Batch 2C-D3-A1 public product and variant projection is complete and installed
 in production.** Migration
@@ -197,10 +196,11 @@ The selector supports legacy size, colour, and size-colour identities and
 generalized one-to-three-axis combinations. It presents only explicit in-stock
 combinations, resolves the authoritative variant UUID, clears dependent values
 when a prior selection makes them unreachable, and fails closed on malformed or
-unavailable projections. Variant Add to Cart remains disabled, so there is no
-variant cart identity, trusted checkout cutover, Paystack change, or customer
-variant purchase path. D2 remains dormant and both draft-only publication
-constraints remain validated.
+unavailable projections. At the D3-A2 checkpoint, variant Add to Cart was
+disabled, so there was no variant cart identity or customer variant purchase
+path. D3-A3 later added cart-line identity; variant checkout remains blocked.
+D2 was dormant and both draft-only publication constraints were validated at
+that checkpoint.
 
 The same local batch corrects punctuation-safe catalogue search and out-of-range
 pagination. Search preserves visible punctuation, strips control characters,
@@ -364,9 +364,9 @@ The responsive correction hashes are:
 - `src/app/vendor/orders/[id]/page.tsx`:
   `9c7f3aa02a9cfcb6a6e5a3a3d31ec2aaf7664f98f8a45d07c9e0c7ddf1d3c201`
 
-Production records all 35 of 35 canonical migrations, including D4-3
-`20261113092035_restrict_order_base_table_select.sql`. The accepted production
-`handle-checkout` is ACTIVE with ID
+At the D4 cutover, production recorded all 35 then-canonical migrations,
+including D4-3 `20261113092035_restrict_order_base_table_select.sql`.
+The accepted production `handle-checkout` is ACTIVE with ID
 `75f93fff-bb2a-4af8-89c0-4b34f51152b4`, version `1`, `verify_jwt=false`, and
 source SHA-256
 `a2416556eae4cab9b4ac98e74ffe2e057db412122f4582b9004e8b826667b12d`.
@@ -392,7 +392,7 @@ provider ambiguity by stored reference and provider evidence, and retain the
 original attempt identity. The D3-A3 version-1 cart and D3-A4
 separation/recovery contracts remain mandatory.
 
-### D5-1 implementation and disposable acceptance
+### D5-1 production installation and release-off status
 
 D5-1 implementation is complete and passed disposable validation: 89 runtime
 tests, 31 focused source tests, and all 8 genuine PostgreSQL concurrency races
@@ -400,10 +400,18 @@ passed. Canonical-versus-installed publication RPC parity passed, including the
 actor-binding correction. Security, ACL, locking, release-default, and failure
 behavior review identified no technical defect.
 
-The canonical D5-1 migration has not been applied to production. Publication
-release control remains OFF, customer variant purchasing remains OFF, and
-production has no published variant parents. D5-2, the vendor publication
-interface, is next; D5-3 and later activation stages remain gated.
+The canonical D5-1 migration is installed and verified in production. Its
+publication RPC is owned by `postgres`, uses `SECURITY DEFINER` with the
+accepted `search_path`, and grants EXECUTE only to `authenticated`, not
+`PUBLIC`, `anon`, or `service_role`. The stored RPC body matches the canonical
+migration. The private release-control singleton is FALSE, the publication
+authorization table has zero rows, and production has zero active variant
+products and zero active variants. No production variant products were activated.
+`VARIANT_PUBLICATION_UI_ENABLED` must remain disabled or unset; vendor
+publication and variant checkout remain disabled.
+
+D5-2A and D5-2B are accepted, and D5-2C preparation is complete. Customer
+variant purchasing is next; D5-3 and later activation stages remain gated.
 
 Race H fixes the application contract at one publication operation per
 transaction. Multiple publication operations inside one explicit transaction
@@ -902,9 +910,10 @@ Completed:
 
 Next release milestone:
 
-- D5-2 vendor publication interface, preserving one publication operation per
-  transaction. D5-1 is implementation-complete and disposable-accepted but is
-  not production-deployed. D5-3 and later activation stages remain gated.
+- Customer variant purchasing integration and validation. D5-1 is installed
+  with release control FALSE; D5-2A and D5-2B are accepted, and D5-2C is
+  complete. Vendor publication and variant checkout remain disabled. Any
+  later activation must preserve one publication operation per transaction.
 
 Paused:
 
@@ -956,7 +965,7 @@ Deferred validation:
   Vercel origin remains in use.
 - Customer order detail at `/account/orders/[id]` remains deferred.
 - Existing product/storefront cleanup remains a separate backlog.
-- Generic variants remain draft-only. D2 trusted order construction is
+- Generic variants remain unpublished. D2 trusted order construction is
   installed and the production D4-1 handler calls it, while the production gate
   continues to reject variant-bearing checkout requests.
 - D3-A2 integrates the installed D3-A1 read contracts into production customer
@@ -964,22 +973,23 @@ Deferred validation:
   production under the forward-fix-first policy; the original D3-A2 build is
   unsafe for upgraded version-1 carts and must not be used as a rollback target.
   D3-A4 checkout separation and D4 are production-deployed. D5-1 source and
-  disposable validation are accepted, but its migration is not applied to
-  production. Publication release control and variant-specific purchasing
-  remain OFF; production has no published variant parents. D5-2 is next, and
-  D5-3 and later activation stages remain gated.
+  disposable validation are accepted, and its migration is installed and
+  verified in production. Publication release control is FALSE and
+  variant-specific purchasing remains OFF; production has no active variant
+  products or variants. D5-2A/B are accepted and D5-2C is complete. Customer
+  variant purchasing is next; D5-3 and later activation stages remain gated.
 
 ## Documentation alignment
 
 This handoff, `README.md`, and `STOREFRONT_V2.md` reflect the accepted D4
-production release and the D5-1 repository/disposable acceptance checkpoint at
-pre-acceptance HEAD `d4d8aa87fab3ce2d2b26e1ff162c01ae58c4a76a`. D4-1, D4-2,
-and D4-3 are production-complete; the canonical D4-3 migration and accepted D4
-checkout handler are active. D5-1 is implementation-complete and
-disposable-accepted, with no identified technical defect, but is not applied to
-production. Publication release control and variant purchasing remain OFF;
-D5-2 is next and D5-3 and later activation stages remain gated. Real paid-order
-delivery remains paused before provider enablement. No
+production release and D5-1 production installation at repository HEAD
+`79bbfd11bf78584f245e35e0e52fbd9677c10062`. All 36 canonical migrations
+are applied. D5-1 is installed and verified, but publication release control
+remains FALSE, vendor publication is disabled, and variant checkout and
+customer purchasing remain OFF. D5-2A/B are accepted, D5-2C is complete,
+customer variant purchasing is next, and D5-3 and later activation stages
+remain gated. Real paid-order delivery remains paused before provider
+enablement. No
 disposable identifiers, emails, invite material, recovery tokens, passwords,
 session tokens, cookies, service-role credentials, dispatcher secrets, Resend
 keys, or SMTP credentials belong in project documentation.

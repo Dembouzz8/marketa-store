@@ -316,9 +316,10 @@ DELETE policy works with the existing active-owner policy so authenticated
 sellers cannot delete variant-parent products, including unused drafts,
 while eligible ordinary products retain their existing delete path.
 
-Batch 2B2 keeps variant parents draft-only. Customer-facing size or colour
-selection, variant-parent publication, variant-specific purchases, and
-variant-aware cart, checkout, order, and payment processing remain deferred.
+At the Batch 2B2 checkpoint, variant parents were draft-only. Customer-facing
+size or colour selection, variant-parent publication, variant-specific
+purchases, and variant-aware cart, checkout, order, and payment processing
+were deferred to later batches.
 
 Universal Product Variants Batches 2C-B1 and 2C-B2 are deployed to the
 production database. B1 provides the canonical category, option-definition,
@@ -366,11 +367,10 @@ pass; the safe reconciliation and financial rollback behavior did. Production
 deployment did not exercise a live payment. The owner explicitly waived a
 fresh C3 production backup and accepted reduced recovery protection.
 
-The unchanged purchase-insertion guard remains enabled. Generic variants stay
-draft-only: customer option selection, trusted variant checkout, variant
-purchasing, and controlled publication remain unavailable. Controlled
-customer-facing selection and trusted checkout integration require separate
-design and validation before the later publication stage.
+The unchanged purchase-insertion guard remains enabled. At the C3 checkpoint,
+generic variants were draft-only; customer option selection, trusted variant
+checkout, variant purchasing, and controlled publication were unavailable.
+Customer variant purchasing still requires separate integration and validation.
 
 **Batch 2C-D2 trusted variant order construction is complete and installed in
 production** through
@@ -388,13 +388,13 @@ service-role-only authority for trusted server-side construction. It uses a
 private, single-use order-item insertion authorization and creates immutable
 variant snapshots. Construction does not deduct stock and does not mutate
 payments, payment events, financial ledgers, or the paid-order outbox. The
-existing checkout Edge Function has not been cut over to this RPC, so D2 is
-installed but dormant.
+accepted D4-1 checkout handler now calls this RPC for trusted order
+construction, while the checkout gate still rejects variant-bearing requests.
 
-Variant parents and variant rows remain draft-only under both publication
-constraints. Customer variant purchasing is not complete. True two-session
-active-variant races remain unverified and must be closed before customer
-variant purchasing is activated.
+At the D2 checkpoint, variant parents and rows were draft-only under both
+publication constraints. The two-session active-variant races were unverified
+then; D5-1 later passed all eight concurrency races. Customer variant
+purchasing remains disabled.
 
 **Batch 2C-D3-A1 public product and variant projection is complete and
 production-installed** through
@@ -584,7 +584,7 @@ disabled. The owner confirms there are no active n8n workflows.
 The accepted production application is release commit
 `9dce8f85bce4ce4d607f4e51b06c74219f5ff13e`, Vercel deployment
 `dpl_BsqB5u12QCHmqRdEnYyrPp98PaUY`, connected to production Supabase project
-`jznuklvrhfivbdsxgiwv`. All 35 of 35 canonical database migrations are applied,
+`jznuklvrhfivbdsxgiwv`. All 36 canonical database migrations are now applied,
 including D4-3
 `20261113092035_restrict_order_base_table_select.sql`, whose SHA-256 is
 `d37c3f279962e3432f3a4d03cf4dcab1de0fcf6cb69c934eaf96631e8cf31411`.
@@ -604,10 +604,16 @@ concurrency races. Canonical-versus-installed RPC parity passed, including the
 corrected actor binding; security, ACL, locking, release-default, and failure
 behavior review identified no technical defect.
 
-D5-1 has not been applied to production. Publication release control remains
-OFF, customer variant purchasing remains OFF, and production still has no
-published variant parents. D5-2, the vendor publication interface, is next;
-D5-3 and later activation stages remain gated. The accepted Race H application
+D5-1 is installed and verified in production as
+`20261117211005_add_secure_variant_publication_authority.sql`. The publication
+RPC owner, security settings, and EXECUTE grants passed production verification;
+its stored source body matched the canonical migration. The private release
+control is FALSE, its authorization table has zero rows, and production has
+zero active variant products and zero active variants. Vendor publication is
+not enabled: `VARIANT_PUBLICATION_UI_ENABLED` must remain disabled or unset.
+D5-2A and D5-2B are accepted, and D5-2C preparation is complete. Customer
+variant purchasing is next; variant checkout remains disabled, and D5-3 and
+later activation stages remain gated. The accepted Race H application
 contract is one publication operation per transaction. Multiple publication
 operations inside one explicit transaction can invert D2 lock ordering and
 produce PostgreSQL deadlock SQLSTATE `40P01`; this is a D5-2 interface
@@ -630,21 +636,21 @@ The release status is:
 - **2C-D4-2 — Production-complete:** immutable, server-authorized order history
   is active in the accepted application release.
 - **2C-D4-3 — Production-complete:** canonical order base-table SELECT
-  restriction is migration 35 of 35 in production.
-- **2C-D5-1 — Implementation-complete and disposable-accepted:** canonical RPC
-  parity, corrected actor binding, security defaults, and 8/8 concurrency races
-  passed. The migration is not production-applied and release control remains
-  OFF.
-- **2C-D5-2 — Next:** vendor publication interface, preserving one publication
-  operation per transaction. D5-3 and later activation stages remain gated.
+  restriction was the 35th production migration.
+- **2C-D5-1 — Production-installed and verified:** canonical publication
+  authority is the 36th production migration. Release control remains FALSE;
+  no variant products or combinations were activated.
+- **2C-D5-2A/B/C — Preparation complete:** D5-2A and D5-2B are accepted;
+  D5-2C is complete. Vendor publication remains disabled. Customer variant
+  purchasing is next; D5-3 and later activation stages remain gated.
 
 Positive payment initialization was tested only through restricted local Deno
 with a mocked provider, not through a payable hosted request. Paystack remains
 in test mode. The accepted historical test-payment discrepancies remain
 unchanged, and historical test-data cleanup remains a prelaunch backlog. There
-are no active n8n workflows. Production has no published variant parents; the
-D5-1 migration is not applied there, draft-only constraints remain in force,
-and variant purchasing stays disabled.
+are no active n8n workflows. Production has no active variant products or
+variants. D5-1 publication authority is installed with release control FALSE,
+and variant checkout and customer purchasing remain disabled.
 
 When Marketa adopts a custom domain, update `MARKETA_SITE_URL`, relevant
 Supabase Site URL and recovery redirect settings, seller invitation
