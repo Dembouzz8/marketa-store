@@ -464,11 +464,15 @@ test("both checkout layers independently enforce the ordinary-cart guard", () =>
   assert.match(checkout, /obtainCheckoutAttempt\(cartFingerprint\)/u)
 })
 
-test("the production variant selector remains purchase-disabled", () => {
+test("variant cart control is opt-in and variant checkout remains disabled", () => {
   const selector = read("src/components/product-variant-selector.tsx")
   const actions = read("src/components/product-actions.tsx")
+  const detailPage = read("src/app/(store)/products/[id]/page.tsx")
 
-  assert.doesNotMatch(selector, /useCartStore|addItem|checkout|Paystack/iu)
+  assert.match(selector, /if \(!cartEnabled \|\| !projection \|\| !selectedVariant\) return/u)
+  assert.match(selector, /cartEnabled \? \(/u)
+  assert.match(detailPage, /process\.env\.CUSTOMER_VARIANT_CART_ENABLED/u)
+  assert.doesNotMatch(selector, /Paystack|authorization_url/iu)
   assert.match(actions, /product\.variant_mode !== "none"/u)
   assert.match(actions, /<ProductVariantSelector/u)
   assert.doesNotMatch(actions, /buildVariantCartItem/u)

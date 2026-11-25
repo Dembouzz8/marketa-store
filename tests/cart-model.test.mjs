@@ -389,6 +389,8 @@ test("variant builder derives correct one-, two-, and three-axis snapshots", () 
     assert.equal(result.variant.product_id, ids.product.toLowerCase())
     assert.equal(result.variant.variant_id, ids.variant.toLowerCase())
     assert.equal(result.variant.stock_snapshot, 6)
+    assert.equal(result.product.price, product().price)
+    assert.deepEqual(result.product.images, product().images)
     assert.equal(result.variant.selected_options.length, axisCount)
     assert.equal(
       result.cartLineId,

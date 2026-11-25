@@ -4,6 +4,10 @@ import type {
 } from "@/types"
 
 export type VariantSelectionState = Record<string, string>
+export type VariantValueAvailability =
+  | "available"
+  | "out_of_stock"
+  | "unavailable"
 
 function valueForAxis(
   combination: PublicProductVariantCombination,
@@ -52,6 +56,22 @@ export function getSelectableVariantValueIds(
   }
 
   return selectable
+}
+
+/** Distinguishes an existing sold-out combination from one never created. */
+export function getVariantValueAvailability(
+  projection: PublicProductVariantProjection,
+  selections: VariantSelectionState,
+  axisId: string,
+  valueId: string
+): VariantValueAvailability {
+  const matches = projection.combinations.filter(
+    (combination) =>
+      valueForAxis(combination, axisId) === valueId &&
+      matchesEarlierSelections(combination, projection, selections, axisId)
+  )
+  if (matches.some((combination) => combination.stock > 0)) return "available"
+  return matches.length > 0 ? "out_of_stock" : "unavailable"
 }
 
 export function reconcileVariantSelection(

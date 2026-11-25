@@ -85,6 +85,7 @@ const ids = {
   variant2: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   axis: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
   value: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  value2: "99999999-9999-4999-8999-999999999999",
 }
 
 function ordinaryItem(overrides = {}) {
@@ -125,9 +126,9 @@ function variantItem(variantId = ids.variant, overrides = {}) {
       selected_options: [
         {
           axis_id: ids.axis,
-          value_id: ids.value,
+          value_id: variantId === ids.variant2 ? ids.value2 : ids.value,
           axis_label: "Size",
-          value_label: "Large",
+          value_label: variantId === ids.variant2 ? "Small" : "Large",
         },
       ],
     },
@@ -254,10 +255,38 @@ test("same ordinary identity merges while independent variants stay separate", a
 
   assert.equal(store.getState().addItem(variantItem()), "applied")
   assert.equal(store.getState().addItem(variantItem(ids.variant2)), "applied")
+  assert.equal(store.getState().addItem(variantItem()), "applied")
   assert.equal(store.getState().items.length, 3)
+  assert.equal(store.getState().items[1].quantity, 2)
+  assert.equal(store.getState().items[2].quantity, 1)
   assert.notEqual(
     store.getState().items[1].cartLineId,
     store.getState().items[2].cartLineId
+  )
+})
+
+test("same variant cannot silently exceed its stock snapshot", async () => {
+  const { store } = createTestStore()
+  await store.persist.rehydrate()
+  assert.equal(store.getState().addItem(variantItem(ids.variant, { quantity: 9 })), "invalid")
+  assert.equal(store.getState().addItem(variantItem(ids.variant, { quantity: 7 })), "applied")
+  assert.equal(store.getState().addItem(variantItem(ids.variant, { quantity: 2 })), "invalid")
+  assert.equal(store.getState().updateQuantity(`variant:${ids.product}:${ids.variant}`, 9), "invalid")
+  assert.equal(store.getState().items[0].quantity, 7)
+})
+
+test("variant IDs and labels persist and restore as separate cart lines", async () => {
+  const { memory, store } = createTestStore()
+  await store.persist.rehydrate()
+  assert.equal(store.getState().addItem(variantItem()), "applied")
+  assert.equal(store.getState().addItem(variantItem(ids.variant2)), "applied")
+  const { store: restored } = createTestStore({
+    [cartStorage.CART_STORAGE_KEY]: memory.values.get(cartStorage.CART_STORAGE_KEY),
+  })
+  await restored.persist.rehydrate()
+  assert.deepEqual(
+    restored.getState().items.map((item) => [item.variant.product_id, item.variant.variant_id, item.quantity, item.variant.selected_options[0].value_label]),
+    [[ids.product, ids.variant, 1, "Large"], [ids.product, ids.variant2, 1, "Small"]]
   )
 })
 

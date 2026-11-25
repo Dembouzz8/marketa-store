@@ -1,27 +1,57 @@
 "use client"
 
+import { Minus, Plus } from "lucide-react"
 import { useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { buildVariantCartItem } from "@/lib/cart-model"
 import {
   getSelectableVariantValueIds,
+  getVariantValueAvailability,
   reconcileVariantSelection,
   resolveSelectedVariant,
   type VariantSelectionState,
 } from "@/lib/product-variant-selection"
+import { useCartStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import type { PublicProductVariantProjection } from "@/types"
+import type { PublicProductVariantProjection, StorefrontProduct } from "@/types"
 
 export function ProductVariantSelector({
   projection,
+  product,
+  cartEnabled,
 }: {
   projection: PublicProductVariantProjection | null
+  product: StorefrontProduct
+  cartEnabled: boolean
 }) {
   const [selections, setSelections] = useState<VariantSelectionState>({})
+  const [quantity, setQuantity] = useState(1)
+  const [cartNotice, setCartNotice] = useState<string | null>(null)
+  const addItem = useCartStore((state) => state.addItem)
   const selectedVariant = useMemo(
     () => (projection ? resolveSelectedVariant(projection, selections) : null),
     [projection, selections]
   )
+  const selectedQuantity = Math.min(quantity, selectedVariant?.stock ?? 1, 99)
+
+  const handleAddToCart = () => {
+    if (!cartEnabled || !projection || !selectedVariant) return
+    const item = buildVariantCartItem({
+      product,
+      projection,
+      variantId: selectedVariant.variant_id,
+      quantity: selectedQuantity,
+    })
+    const result = item ? addItem(item) : "invalid"
+    setCartNotice(
+      result === "applied"
+        ? "Added to cart. Variant checkout is not available yet."
+        : result === "invalid"
+          ? "This combination is unavailable or your cart already has the available stock."
+          : "Your saved cart is not ready for safe changes yet."
+    )
+  }
 
   if (!projection) {
     return (
@@ -73,6 +103,12 @@ export function ProductVariantSelector({
               {axis.values.map((value) => {
                 const isSelected = selections[axis.id] === value.id
                 const isAvailable = selectable.has(value.id)
+                const availability = getVariantValueAvailability(
+                  projection,
+                  selections,
+                  axis.id,
+                  value.id
+                )
 
                 return (
                   <button
@@ -80,7 +116,9 @@ export function ProductVariantSelector({
                     type="button"
                     aria-pressed={isSelected}
                     disabled={!isAvailable}
-                    onClick={() =>
+                    onClick={() => {
+                      setCartNotice(null)
+                      setQuantity(1)
                       setSelections((current) =>
                         reconcileVariantSelection(
                           projection,
@@ -89,7 +127,7 @@ export function ProductVariantSelector({
                           value.id
                         )
                       )
-                    }
+                    }}
                     className={cn(
                       "inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2",
                       isSelected
@@ -107,6 +145,13 @@ export function ProductVariantSelector({
                       />
                     )}
                     {value.label}
+                    {!isAvailable && (
+                      <span className="text-xs">
+                        {availability === "out_of_stock"
+                          ? "Out of stock"
+                          : "Unavailable combination"}
+                      </span>
+                    )}
                   </button>
                 )
               })}
@@ -132,7 +177,54 @@ export function ProductVariantSelector({
             : "All combinations are currently out of stock."}
       </p>
 
-      <DisabledVariantPurchase />
+      {cartEnabled ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-sm font-medium text-zinc-700">Quantity</span>
+            <div className="flex items-center rounded-lg border border-zinc-200">
+              <button
+                type="button"
+                aria-label="Decrease variant quantity"
+                disabled={!selectedVariant || selectedQuantity <= 1}
+                onClick={() => setQuantity((current) => Math.max(1, current - 1))}
+                className="flex size-11 items-center justify-center text-zinc-600 disabled:text-zinc-300"
+              >
+                <Minus className="size-4" />
+              </button>
+              <span className="w-12 text-center text-sm font-semibold" aria-live="polite">
+                {selectedQuantity}
+              </span>
+              <button
+                type="button"
+                aria-label="Increase variant quantity"
+                disabled={!selectedVariant || selectedQuantity >= Math.min(selectedVariant.stock, 99)}
+                onClick={() => setQuantity((current) => current + 1)}
+                className="flex size-11 items-center justify-center text-zinc-600 disabled:text-zinc-300"
+              >
+                <Plus className="size-4" />
+              </button>
+            </div>
+          </div>
+          <Button
+            type="button"
+            onClick={handleAddToCart}
+            disabled={!selectedVariant}
+            className="h-auto w-full rounded-xl bg-zinc-900 py-4 text-lg font-semibold text-white hover:bg-zinc-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+          >
+            Add Selection to Cart
+          </Button>
+          <p className="text-xs leading-5 text-zinc-500">
+            Variant checkout is not available yet.
+          </p>
+          {cartNotice && (
+            <p role="status" className="text-sm text-zinc-700">
+              {cartNotice}
+            </p>
+          )}
+        </div>
+      ) : (
+        <DisabledVariantPurchase />
+      )}
     </section>
   )
 }

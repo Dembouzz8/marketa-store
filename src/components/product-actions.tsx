@@ -17,15 +17,19 @@ import type {
 export function ProductActions({
   product,
   variantProjection,
+  variantCartEnabled,
 }: {
   product: StorefrontProduct
   variantProjection: PublicProductVariantProjection | null
+  variantCartEnabled: boolean
 }) {
   if (product.variant_mode !== "none") {
     return (
       <ProductVariantSelector
         key={product.id}
+        product={product}
         projection={variantProjection}
+        cartEnabled={variantCartEnabled}
       />
     )
   }

@@ -316,6 +316,29 @@ export function createCartStore({
           const item = normalized[0]
           if (!item || normalized.length !== 1) return "invalid"
 
+          if (item.kind === "variant") {
+            if (item.quantity > item.variant.stock_snapshot) return "invalid"
+            const existing = get().items.find(
+              (candidate) => candidate.cartLineId === item.cartLineId
+            )
+            if (existing) {
+              if (
+                existing.kind !== "variant" ||
+                existing.variant.selected_options.length !==
+                  item.variant.selected_options.length ||
+                existing.variant.selected_options.some(
+                  (option, index) =>
+                    option.axis_id !== item.variant.selected_options[index]?.axis_id ||
+                    option.value_id !== item.variant.selected_options[index]?.value_id
+                ) ||
+                existing.quantity + item.quantity >
+                  Math.min(existing.variant.stock_snapshot, item.variant.stock_snapshot, MAX_CART_QUANTITY)
+              ) {
+                return "invalid"
+              }
+            }
+          }
+
           set((state) => ({
             items: normalizeCartItemsV1([...state.items, item]),
           }))
@@ -363,6 +386,15 @@ export function createCartStore({
             })
           } else {
             const nextQuantity = Math.min(quantity, MAX_CART_QUANTITY)
+            const target = currentItems.find(
+              (item) => item.cartLineId === cartLineId
+            )
+            if (
+              target?.kind === "variant" &&
+              nextQuantity > target.variant.stock_snapshot
+            ) {
+              return "invalid"
+            }
             set({
               items: normalizeCartItemsV1(
                 currentItems.map((item) =>

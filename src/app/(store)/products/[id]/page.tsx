@@ -6,6 +6,7 @@ import { ProductActions } from "@/components/product-actions"
 import { ProductCard } from "@/components/product-card"
 import { ProductGallery } from "@/components/product-gallery"
 import { Separator } from "@/components/ui/separator"
+import { isCustomerVariantCartEnabled } from "@/lib/customer-variant-cart-gate"
 import { getProductDetail, isProductId } from "@/lib/product-detail"
 import {
   categoryMatchesSlug,
@@ -88,6 +89,9 @@ export default async function ProductDetailPage({
             <ProductActions
               product={product}
               variantProjection={detail.variantProjection}
+              variantCartEnabled={isCustomerVariantCartEnabled(
+                process.env.CUSTOMER_VARIANT_CART_ENABLED
+              )}
             />
 
             <div className="grid gap-3 sm:grid-cols-2">

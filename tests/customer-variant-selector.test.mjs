@@ -16,6 +16,7 @@ const card = read("src/components/product-card.tsx")
 const actions = read("src/components/product-actions.tsx")
 const selector = read("src/components/product-variant-selector.tsx")
 const selectionSource = read("src/lib/product-variant-selection.ts")
+const gateSource = read("src/lib/customer-variant-cart-gate.ts")
 
 const transpiledSelection = ts.transpileModule(selectionSource, {
   compilerOptions: {
@@ -30,9 +31,15 @@ const selectionModule = await import(
 )
 const {
   getSelectableVariantValueIds,
+  getVariantValueAvailability,
   reconcileVariantSelection,
   resolveSelectedVariant,
 } = selectionModule
+const gateModule = await import(
+  `data:text/javascript;base64,${Buffer.from(ts.transpileModule(gateSource, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText).toString("base64")}`
+)
 
 const ids = {
   product: "11111111-1111-4111-8111-111111111111",
@@ -349,6 +356,18 @@ test("sold-out and nonexistent combinations remain unreachable", () => {
     }),
     null
   )
+  assert.equal(
+    getVariantValueAvailability(projection, { [ids.axis1]: ids.a2 }, ids.axis2, ids.b1),
+    "out_of_stock"
+  )
+  assert.equal(
+    getVariantValueAvailability(projection, { [ids.axis1]: ids.a1, [ids.axis2]: ids.b1 }, ids.axis3, ids.c2),
+    "unavailable"
+  )
+  assert.equal(
+    getVariantValueAvailability(projection, { [ids.axis1]: ids.a1 }, ids.axis2, ids.b2),
+    "available"
+  )
 
   const soldOut = {
     ...projection,
@@ -377,7 +396,7 @@ test("variant cards navigate for options and cannot use the ordinary cart action
   assert.match(actions, /function OrdinaryProductActions/u)
 })
 
-test("selector is accessible, stock-aware, and has no cart or checkout authority", () => {
+test("selector is accessible, stock-aware, and cart action requires exact resolved selection", () => {
   assert.match(selector, /<fieldset/u)
   assert.match(selector, /<legend/u)
   assert.match(selector, /aria-pressed=/u)
@@ -389,8 +408,25 @@ test("selector is accessible, stock-aware, and has no cart or checkout authority
   assert.match(selector, /Quantity is limited to/u)
   assert.match(selector, /Variant purchasing coming soon/u)
   assert.match(selector, /<Button[\s\S]*?disabled/u)
-  assert.doesNotMatch(selector, /useCartStore|addItem|checkout|Paystack/iu)
+  assert.match(selector, /disabled=\{!selectedVariant\}/u)
+  assert.match(selector, /variantId: selectedVariant\.variant_id/u)
+  assert.match(selector, /buildVariantCartItem/u)
+  assert.match(selector, /cartEnabled \? \(/u)
+  assert.match(selector, /availability === "out_of_stock"/u)
+  assert.doesNotMatch(selector, /Paystack|authorization_url/iu)
   assert.doesNotMatch(detailPage, /construct_trusted_checkout_order/u)
+})
+
+test("customer variant cart gate defaults OFF and is server-controlled", () => {
+  const { isCustomerVariantCartEnabled } = gateModule
+  for (const value of [undefined, null, false, true, "TRUE", "1", "false", " true "]) {
+    assert.equal(isCustomerVariantCartEnabled(value), false)
+  }
+  assert.equal(isCustomerVariantCartEnabled("true"), true)
+  assert.match(detailPage, /process\.env\.CUSTOMER_VARIANT_CART_ENABLED/u)
+  assert.match(detailPage, /variantCartEnabled=\{isCustomerVariantCartEnabled/u)
+  assert.doesNotMatch(detailPage, /NEXT_PUBLIC_CUSTOMER_VARIANT_CART_ENABLED/u)
+  assert.match(selector, /if \(!cartEnabled \|\| !projection \|\| !selectedVariant\) return/u)
 })
 
 test("D3-A2 leaves cart, checkout, payment recovery, and Edge checkout untouched", () => {
