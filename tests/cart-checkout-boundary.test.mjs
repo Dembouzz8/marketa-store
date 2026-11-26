@@ -496,7 +496,7 @@ test("checkout gate accepts only exact true and stays server-controlled", () => 
   assert.doesNotMatch(layout, /NEXT_PUBLIC_CUSTOMER_VARIANT_CHECKOUT_ENABLED/u)
   assert.match(sidebar, /variantCheckoutEnabled=\{variantCheckoutEnabled\}/u)
   assert.match(modal, /prepareCheckoutSeparation\([\s\S]*variantCheckoutEnabled/u)
-  assert.match(edge, /const VARIANT_CHECKOUT_ENABLED = false/u)
+  assert.match(edge, /Deno\.env\.get\("VARIANT_CHECKOUT_ENABLED"\) === "true"/u)
   assert.match(edge, /if \(!variantCheckoutAllowed\(items\)\)/u)
 })
 

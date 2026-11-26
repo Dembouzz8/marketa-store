@@ -552,7 +552,8 @@ test("D5-2A structural and stock safeguards remain isolated from publication aut
   assert.doesNotMatch(productionSources, />\s*(?:Publish|Unpublish)\s*</)
 
   const checkout = read("supabase/functions/handle-checkout/index.ts")
-  assert.match(checkout, /const VARIANT_CHECKOUT_ENABLED = false/)
+  assert.match(checkout, /Deno\.env\.get\("VARIANT_CHECKOUT_ENABLED"\) === "true"/)
+  assert.match(checkout, /catch \{\s*return false/)
 })
 
 test("publication server gate fails closed before client creation or RPC invocation", async () => {

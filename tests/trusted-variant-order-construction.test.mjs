@@ -509,6 +509,7 @@ test("product, vendor, publication, relationship, and stock checks are authorita
   assert.match(normalized, /vendor\.is_active is distinct from true/u)
   assert.match(normalized, /product_record\.is_active is distinct from true/u)
   assert.match(normalized, /variant\.vendor_id = product_record\.vendor_id/u)
+  assert.match(normalized, /variant\.product_id = item_record\.product_id/u)
   assert.match(normalized, /variant_record\.is_active is distinct from true/u)
   assert.match(normalized, /product_record\.stock < item_record\.quantity/u)
   assert.match(normalized, /variant_record\.stock < item_record\.quantity/u)

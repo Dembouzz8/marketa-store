@@ -19,7 +19,7 @@ function sourceBetween(start, end, includeStart = false) {
   return source.slice(includeStart ? startIndex : startIndex + start.length, endIndex)
 }
 
-function loadContract() {
+function loadContract(options = {}) {
   const constants = sourceBetween(
     "const MAX_BODY_BYTES",
     "const corsHeaders",
@@ -74,7 +74,19 @@ function loadContract() {
       target: ts.ScriptTarget.ES2022,
     },
   }).outputText
-  const context = { crypto: globalThis.crypto, TextEncoder }
+  const context = {
+    crypto: globalThis.crypto,
+    TextEncoder,
+    Deno: {
+      env: {
+        get(name) {
+          if (name !== "VARIANT_CHECKOUT_ENABLED") return undefined
+          if (options.envThrows) throw new Error("environment unavailable")
+          return options.variantCheckoutValue
+        },
+      },
+    },
+  }
   vm.runInNewContext(compiled, context, { filename: functionFile })
   return context.__contract
 }
@@ -218,6 +230,10 @@ function loadHandler(options = {}) {
     Deno: {
       env: {
         get(name) {
+          if (name === "VARIANT_CHECKOUT_ENABLED") {
+            if (options.envThrows) throw new Error("environment unavailable")
+            return options.variantCheckoutValue
+          }
           return {
             SUPABASE_URL: "https://example.supabase.co",
             SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
@@ -343,7 +359,7 @@ test("malformed requests and client financial fields are rejected", () => {
   }
 })
 
-test("variant purchasing remains fail-closed while ordinary items pass the gate", () => {
+test("variant purchasing defaults OFF while ordinary items pass the gate", () => {
   assert.equal(
     contract.variantAllowedJson(
       JSON.stringify([{ product_id: productA, quantity: 1 }])
@@ -358,7 +374,7 @@ test("variant purchasing remains fail-closed while ordinary items pass the gate"
     ),
     false
   )
-  assert.match(source, /const VARIANT_CHECKOUT_ENABLED = false/u)
+  assert.match(source, /Deno\.env\.get\("VARIANT_CHECKOUT_ENABLED"\) === "true"/u)
 
   const gateIndex = source.indexOf("if (!variantCheckoutAllowed(items))")
   const clientIndex = source.indexOf("const supabase = createClient(")
@@ -368,20 +384,132 @@ test("variant purchasing remains fail-closed while ordinary items pass the gate"
   assert.ok(gateIndex >= 0 && clientIndex > gateIndex && rpcIndex > clientIndex)
 })
 
-test("blocked variant requests call neither the RPC nor Paystack", async () => {
-  const harness = loadHandler()
-  const { response, payload } = await harness.post(
-    JSON.parse(
-      checkout([
-        { product_id: productA, product_variant_id: variantA, quantity: 1 },
-      ])
-    )
-  )
-  assert.equal(response.status, 400)
-  assert.equal(payload.error.code, "INVALID_ITEMS")
-  assert.equal(harness.calls.auth, 0)
-  assert.equal(harness.calls.rpc.length, 0)
+test("Edge variant gate accepts only exact true and fails closed on unavailable env", () => {
+  const ordinary = [{ product_id: productA, quantity: 1 }]
+  const variant = [{ product_id: productA, product_variant_id: variantA, quantity: 1 }]
+  const mixed = [...ordinary, ...variant]
+  for (const variantCheckoutValue of [undefined, null, false, true, "TRUE", "1", " true", "false"]) {
+    const edge = loadContract({ variantCheckoutValue })
+    assert.equal(edge.variantAllowedJson(JSON.stringify(ordinary)), true)
+    assert.equal(edge.variantAllowedJson(JSON.stringify(variant)), false)
+    assert.equal(edge.variantAllowedJson(JSON.stringify(mixed)), false)
+  }
+  const unavailable = loadContract({ envThrows: true })
+  assert.equal(unavailable.variantAllowedJson(JSON.stringify(ordinary)), true)
+  assert.equal(unavailable.variantAllowedJson(JSON.stringify(variant)), false)
+  assert.equal(loadContract({ variantCheckoutValue: "true" }).variantAllowedJson(JSON.stringify(mixed)), true)
+})
+
+test("blocked variant and mixed requests call neither trusted RPC nor Paystack", async () => {
+  for (const items of [
+    [{ product_id: productA, product_variant_id: variantA, quantity: 1 }],
+    [{ product_id: productB, quantity: 1 }, { product_id: productA, product_variant_id: variantA, quantity: 1 }],
+  ]) {
+    for (const options of [{}, { variantCheckoutValue: "TRUE" }, { envThrows: true }]) {
+      const harness = loadHandler(options)
+      const { response, payload } = await harness.post(JSON.parse(checkout(items)))
+      assert.equal(response.status, 400)
+      assert.equal(payload.error.code, "INVALID_ITEMS")
+      assert.equal(harness.calls.auth, 0)
+      assert.equal(harness.calls.rpc.length, 0)
+      assert.equal(harness.calls.fetch.length, 0)
+    }
+  }
+})
+
+test("gate ON forwards exact variant and mixed identities to trusted construction", async () => {
+  for (const items of [
+    [{ product_id: productA, product_variant_id: variantA, quantity: 1 }],
+    [{ product_id: productB, quantity: 1 }, { product_id: productA, product_variant_id: variantA, quantity: 2 }],
+  ]) {
+    const harness = loadHandler({
+      variantCheckoutValue: "true",
+      rpc: {
+        data: [{
+          construction_outcome: "constructed",
+          constructed_order_id: orderId,
+          constructed_total_amount_kobo: "12345",
+          constructed_item_count: items.length,
+        }],
+        error: null,
+      },
+    })
+    const { response } = await harness.post(JSON.parse(checkout(items)))
+    assert.equal(response.status, 200)
+    assert.equal(harness.calls.rpc.length, 1)
+    assert.equal(harness.calls.rpc[0].name, "construct_trusted_checkout_order")
+    assert.equal(JSON.stringify(harness.calls.rpc[0].args.p_items), contract.sortJson(JSON.stringify(items)))
+    assert.equal(harness.calls.fetch.length, 1)
+  }
+})
+
+test("trusted construction rejects mismatched variant without Paystack initialization", async () => {
+  const harness = loadHandler({
+    variantCheckoutValue: "true",
+    rpc: {
+      data: null,
+      error: { code: "23514", message: "Variant checkout inventory is unavailable." },
+    },
+  })
+  const { response, payload } = await harness.post(JSON.parse(checkout([
+    { product_id: productA, product_variant_id: variantB, quantity: 1 },
+  ])))
+  assert.equal(response.status, 409)
+  assert.equal(payload.error.code, "INSUFFICIENT_STOCK")
+  assert.equal(harness.calls.rpc.length, 1)
   assert.equal(harness.calls.fetch.length, 0)
+})
+
+test("variant checkout attempt reuses only the same exact combination", async () => {
+  const customer = {
+    id: "11111111-1111-4111-8111-111111111111",
+    email: "buyer@example.com",
+    name: "Ada Buyer",
+    phone: "+2348000000000",
+  }
+  const firstBody = JSON.parse(checkout([
+    { product_id: productA, product_variant_id: variantA, quantity: 1 },
+  ]))
+  const firstFingerprint = await contract.fingerprintJson(
+    JSON.stringify({ shipping_address: firstBody.shipping_address, items: firstBody.items }),
+    JSON.stringify(customer)
+  )
+  const attempt = {
+    checkout_attempt_id: checkoutAttempt,
+    order_id: orderId,
+    request_fingerprint: firstFingerprint,
+    payment_reference: "TEST_existing_reference",
+    payment_authorization_url: "https://checkout.paystack.test/existing",
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  }
+  const order = {
+    id: orderId,
+    customer_id: customer.id,
+    status: "pending",
+    payment_ref: attempt.payment_reference,
+  }
+  const replay = loadHandler({
+    variantCheckoutValue: "true",
+    attemptReads: [{ data: attempt, error: null }],
+    orderReads: [{ data: order, error: null }],
+  })
+  const replayResult = await replay.post(firstBody)
+  assert.equal(replayResult.response.status, 200)
+  assert.equal(replayResult.payload.data.reused, true)
+  assert.equal(replay.calls.rpc.length, 0)
+  assert.equal(replay.calls.fetch.length, 0)
+
+  const conflict = loadHandler({
+    variantCheckoutValue: "true",
+    attemptReads: [{ data: attempt, error: null }],
+  })
+  const conflictResult = await conflict.post(JSON.parse(checkout([
+    { product_id: productA, product_variant_id: variantB, quantity: 1 },
+  ])))
+  assert.equal(conflictResult.response.status, 409)
+  assert.equal(conflictResult.payload.error.code, "CHECKOUT_ATTEMPT_CONFLICT")
+  assert.equal(conflict.calls.rpc.length, 0)
+  assert.equal(conflict.calls.fetch.length, 0)
 })
 
 test("constructed outcome supplies exact trusted RPC arguments and initializes once", async () => {

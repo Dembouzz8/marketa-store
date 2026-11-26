@@ -267,15 +267,17 @@ test("rejects missing and malformed signatures and missing secret explicitly", a
 })
 
 test("only charge.success invokes finalization", async () => {
-  const unsupportedBody = signedPayload({ event: "transfer.success" })
-  const unsupportedMode = createMode()
-  const unsupported = await invoke(unsupportedMode, {
-    rawBody: unsupportedBody,
-    signature: signatureFor(unsupportedBody),
-  })
-  assert.equal(unsupported.response.status, 200)
-  assert.equal(unsupportedMode.rpcCalls.length, 0)
-  assert.equal(unsupportedMode.clientCreations.length, 0)
+  for (const event of ["transfer.success", "charge.failed", "charge.abandoned"]) {
+    const unsupportedBody = signedPayload({ event })
+    const unsupportedMode = createMode()
+    const unsupported = await invoke(unsupportedMode, {
+      rawBody: unsupportedBody,
+      signature: signatureFor(unsupportedBody),
+    })
+    assert.equal(unsupported.response.status, 200)
+    assert.equal(unsupportedMode.rpcCalls.length, 0)
+    assert.equal(unsupportedMode.clientCreations.length, 0)
+  }
 
   const successMode = createMode()
   const success = await invoke(successMode)

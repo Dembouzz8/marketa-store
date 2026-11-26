@@ -699,8 +699,14 @@ test("direct stock authority remains narrow and no vendor grant is broadened", (
   )
 })
 
-test("variant purchasing and all customer UI remain untouched", () => {
-  assert.match(edge, /const VARIANT_CHECKOUT_ENABLED = false/)
+test("publication authority leaves checkout gated and inactive by default", () => {
+  assert.match(edge, /Deno\.env\.get\("VARIANT_CHECKOUT_ENABLED"\) === "true"/)
+  assert.doesNotMatch(edge, /NEXT_PUBLIC_VARIANT_CHECKOUT_ENABLED/)
+  assert.match(edge, /if \(!variantCheckoutAllowed\(items\)\) \{\s*return errorResponse\(\s*"INVALID_ITEMS"/)
+  assert.ok(
+    edge.indexOf("if (!variantCheckoutAllowed(items))") <
+      edge.indexOf("const supabase = createClient(")
+  )
   assert.doesNotMatch(migration, /variant_checkout_enabled/i)
   assert.doesNotMatch(
     migration,

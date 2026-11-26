@@ -8,9 +8,6 @@ const MAX_BODY_BYTES = 32 * 1024
 const MAX_ITEMS = 50
 const MAX_QUANTITY = 99
 const CHECKOUT_REUSE_WINDOW_MS = 30 * 60 * 1000
-// Variant identities are accepted by the contract for the later D5 cutover,
-// but purchasing remains deliberately disabled in this D4 batch.
-const VARIANT_CHECKOUT_ENABLED = false
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -210,10 +207,15 @@ function compareCheckoutItems(left: ValidatedItem, right: ValidatedItem) {
 }
 
 function variantCheckoutAllowed(items: ValidatedItem[]): boolean {
-  return (
-    VARIANT_CHECKOUT_ENABLED ||
-    items.every((item) => item.product_variant_id === undefined)
-  )
+  if (items.every((item) => item.product_variant_id === undefined)) {
+    return true
+  }
+
+  try {
+    return Deno.env.get("VARIANT_CHECKOUT_ENABLED") === "true"
+  } catch {
+    return false
+  }
 }
 
 function parseTrustedTotalKobo(value: unknown): number | null {

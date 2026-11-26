@@ -371,7 +371,11 @@ test("ordinary checkout order-item construction remains compatible through the t
     constructor,
     /if item_record\.value ->> 'product_variant_id' is not null then[\s\S]*insert into marketa_private\.trusted_order_item_insert_authorizations/
   )
-  assert.match(checkout, /const VARIANT_CHECKOUT_ENABLED = false/)
+  assert.match(
+    checkout,
+    /if \(items\.every\(\(item\) => item\.product_variant_id === undefined\)\) \{\s*return true/
+  )
+  assert.match(checkout, /Deno\.env\.get\("VARIANT_CHECKOUT_ENABLED"\) === "true"/)
   assert.match(migration, /if new\.product_id is null then/)
   assert.match(migration, /parent_mode is distinct from 'none'/)
 })

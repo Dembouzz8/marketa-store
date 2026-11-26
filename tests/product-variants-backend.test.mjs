@@ -619,8 +619,8 @@ test("ordinary checkout remains protected by the trusted construction boundary",
 
   assert.match(validation, /Object\.keys\(item\)\.some\(\(field\) => !ITEM_FIELDS\.has\(field\)\)/)
   assert.match(validation, /product_id: productId,[\s\S]*quantity: item\.quantity/)
-  assert.match(variantGate, /VARIANT_CHECKOUT_ENABLED/)
-  assert.match(checkout, /const VARIANT_CHECKOUT_ENABLED = false/)
+  assert.match(variantGate, /Deno\.env\.get\("VARIANT_CHECKOUT_ENABLED"\) === "true"/)
+  assert.match(variantGate, /catch \{\s*return false/)
   assert.match(constructor, /product_record\.is_active is distinct from true/)
   assert.match(constructor, /product_record\.variant_mode is distinct from 'none'/)
   assert.match(constructor, /product_record\.stock < item_record\.quantity/)
