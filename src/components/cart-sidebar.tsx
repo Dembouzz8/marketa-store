@@ -40,7 +40,11 @@ function isProfileComplete(profile: CustomerProfileReadiness | null) {
   return Boolean(profile?.full_name?.trim() && profile.phone?.trim())
 }
 
-export function CartSidebar() {
+export function CartSidebar({
+  variantCheckoutEnabled,
+}: {
+  variantCheckoutEnabled: boolean
+}) {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false)
   const [isCheckingCheckoutAccess, setIsCheckingCheckoutAccess] =
     useState(false)
@@ -68,7 +72,8 @@ export function CartSidebar() {
   const checkoutEvaluation = evaluateOrdinaryCartCheckout(
     items,
     hasHydratedCart,
-    persistenceHealth.status
+    persistenceHealth.status,
+    variantCheckoutEnabled
   )
   const persistenceNotice = cartPersistenceMessage(
     hasHydratedCart,
@@ -84,7 +89,8 @@ export function CartSidebar() {
     const currentEvaluation = evaluateOrdinaryCartCheckout(
       useCartStore.getState().items,
       useCartStore.persist.hasHydrated(),
-      getCartPersistenceSnapshot().status
+      getCartPersistenceSnapshot().status,
+      variantCheckoutEnabled
     )
     if (!currentEvaluation.eligible) {
       setCheckoutGateError(
@@ -388,7 +394,11 @@ export function CartSidebar() {
         </SheetContent>
       </Sheet>
 
-      <CheckoutModal open={isCheckoutOpen} onOpenChange={setIsCheckoutOpen} />
+      <CheckoutModal
+        open={isCheckoutOpen}
+        onOpenChange={setIsCheckoutOpen}
+        variantCheckoutEnabled={variantCheckoutEnabled}
+      />
     </>
   )
 }

@@ -49,12 +49,13 @@ import type {
   CheckoutErrorResponse,
   CheckoutFormData,
   CheckoutSuccessResponse,
-  OrdinaryCheckoutPayload,
+  CheckoutPayload,
 } from "@/types"
 
 interface CheckoutModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  variantCheckoutEnabled: boolean
 }
 
 type CheckoutStep = 1 | 2 | 3
@@ -200,7 +201,11 @@ const initialFormData: CheckoutFormData = {
   },
 }
 
-export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
+export function CheckoutModal({
+  open,
+  onOpenChange,
+  variantCheckoutEnabled,
+}: CheckoutModalProps) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), [])
   const [step, setStep] = useState<CheckoutStep>(1)
   const [formData, setFormData] =
@@ -232,7 +237,8 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
   const checkoutEvaluation = evaluateOrdinaryCartCheckout(
     items,
     hasHydratedCart,
-    persistenceHealth.status
+    persistenceHealth.status,
+    variantCheckoutEnabled
   )
 
   useEffect(() => {
@@ -402,7 +408,8 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
       const currentEvaluation = evaluateOrdinaryCartCheckout(
         currentItems,
         useCartStore.persist.hasHydrated(),
-        getCartPersistenceSnapshot().status
+        getCartPersistenceSnapshot().status,
+        variantCheckoutEnabled
       )
       if (!currentEvaluation.eligible) {
         throw new CheckoutUiError(
@@ -410,8 +417,11 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
         )
       }
 
-      const checkoutPreparation = prepareCheckoutSeparation(currentItems)
-      if (checkoutPreparation.status !== "ordinary") {
+      const checkoutPreparation = prepareCheckoutSeparation(
+        currentItems,
+        variantCheckoutEnabled
+      )
+      if (checkoutPreparation.status === "contained") {
         throw new CheckoutUiError(
           "Review the products and quantities in your cart."
         )
@@ -419,7 +429,7 @@ export function CheckoutModal({ open, onOpenChange }: CheckoutModalProps) {
 
       const cartFingerprint = checkoutPreparation.fingerprint
       const checkoutAttempt = obtainCheckoutAttempt(cartFingerprint)
-      const payload: OrdinaryCheckoutPayload = {
+      const payload: CheckoutPayload = {
         checkout_attempt_id: checkoutAttempt.checkout_attempt_id,
         items: checkoutPreparation.requestItems,
         shipping_address: normalizeShippingAddress(formData),

@@ -1,6 +1,7 @@
 import { CartSidebar } from "@/components/cart-sidebar"
 import { Footer } from "@/components/footer"
 import { Navbar } from "@/components/navbar"
+import { isCustomerVariantCheckoutEnabled } from "@/lib/customer-variant-checkout-gate"
 
 export default function StoreLayout({
   children,
@@ -10,7 +11,11 @@ export default function StoreLayout({
   return (
     <>
       <Navbar />
-      <CartSidebar />
+      <CartSidebar
+        variantCheckoutEnabled={isCustomerVariantCheckoutEnabled(
+          process.env.CUSTOMER_VARIANT_CHECKOUT_ENABLED
+        )}
+      />
       {children}
       <Footer />
     </>

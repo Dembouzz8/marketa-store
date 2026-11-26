@@ -84,9 +84,11 @@ paymentRecoverySource = replaceImport(
   checkoutSeparationUrl
 )
 
-const { evaluateOrdinaryCartCheckout } = await import(moduleUrl(storeSource))
+const { createCartStore, evaluateOrdinaryCartCheckout } = await import(moduleUrl(storeSource))
+const cartStorage = await import(cartStorageUrl)
 const checkoutSeparation = await import(checkoutSeparationUrl)
 const paymentRecovery = await import(moduleUrl(paymentRecoverySource))
+const checkoutGate = await import(moduleUrl(transpile("src/lib/customer-variant-checkout-gate.ts")))
 
 const ids = {
   productA: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -209,7 +211,10 @@ test("C-D: variant-only carts retain exact internal identity and expose no reque
       quantity: 1,
     },
   ])
-  assert.equal(paymentRecovery.createCartFingerprint([variant]), null)
+  assert.equal(
+    paymentRecovery.createCartFingerprint([variant]),
+    checkoutSeparation.prepareCheckoutSeparation([variant], true).fingerprint
+  )
   assert.equal(
     evaluateOrdinaryCartCheckout([variant], true, "healthy").reason,
     "VARIANT_UNSUPPORTED"
@@ -262,7 +267,7 @@ test("I: invalid variant identity never falls back to the parent product", () =>
   ])
 
   assertContained(result, "INVALID_ITEM")
-  assert.equal(paymentRecovery.createCartFingerprint([variantItem()]), null)
+  assert.notEqual(paymentRecovery.createCartFingerprint([variantItem()]), null)
 })
 
 test("J: variants of one parent remain distinct by exact variant UUID", () => {
@@ -343,7 +348,7 @@ test("N: the modal re-reads and revalidates the live cart at final preparation",
     "evaluateOrdinaryCartCheckout(\n        currentItems"
   )
   const preparation = paymentSource.indexOf(
-    "prepareCheckoutSeparation(currentItems)"
+    "prepareCheckoutSeparation("
   )
   const attempt = paymentSource.indexOf(
     "obtainCheckoutAttempt(cartFingerprint)"
@@ -395,7 +400,7 @@ test("O: contained preparation has no storage, attempt, or fetch side effects", 
   const checkout = read("src/components/checkout-modal.tsx")
   assert.match(
     checkout,
-    /prepareCheckoutSeparation\(currentItems\)[\s\S]*status !== "ordinary"[\s\S]*obtainCheckoutAttempt\(cartFingerprint\)[\s\S]*fetch\(webhookUrl/u
+    /prepareCheckoutSeparation\([\s\S]*status === "contained"[\s\S]*obtainCheckoutAttempt\(cartFingerprint\)[\s\S]*fetch\(webhookUrl/u
   )
 })
 
@@ -438,7 +443,7 @@ test("P: ordinary checkout attempt reuse and pending recovery remain compatible"
   }
 })
 
-test("payment-success cleanup still requires matching healthy ordinary evidence", () => {
+test("payment-success cleanup still requires matching healthy cart evidence", () => {
   const successSource = read("src/app/(store)/payment-success/page.tsx")
   assert.match(successSource, /persistenceHealth\.status !== "healthy"/u)
   assert.match(successSource, /pendingCheckoutMatchesCart\(/u)
@@ -459,7 +464,7 @@ test("both checkout layers independently enforce the ordinary-cart guard", () =>
   )
   assert.match(
     checkout,
-    /const handlePayment[\s\S]*evaluateOrdinaryCartCheckout\([\s\S]*if \(!currentEvaluation\.eligible\)[\s\S]*prepareCheckoutSeparation\(currentItems\)/u
+    /const handlePayment[\s\S]*evaluateOrdinaryCartCheckout\([\s\S]*if \(!currentEvaluation\.eligible\)[\s\S]*prepareCheckoutSeparation\(/u
   )
   assert.match(checkout, /obtainCheckoutAttempt\(cartFingerprint\)/u)
 })
@@ -476,4 +481,129 @@ test("variant cart control is opt-in and variant checkout remains disabled", () 
   assert.match(actions, /product\.variant_mode !== "none"/u)
   assert.match(actions, /<ProductVariantSelector/u)
   assert.doesNotMatch(actions, /buildVariantCartItem/u)
+})
+
+test("checkout gate accepts only exact true and stays server-controlled", () => {
+  for (const value of [undefined, null, false, "TRUE", "1", " true", "false"]) {
+    assert.equal(checkoutGate.isCustomerVariantCheckoutEnabled(value), false)
+  }
+  assert.equal(checkoutGate.isCustomerVariantCheckoutEnabled("true"), true)
+  const layout = read("src/app/(store)/layout.tsx")
+  const sidebar = read("src/components/cart-sidebar.tsx")
+  const modal = read("src/components/checkout-modal.tsx")
+  const edge = read("supabase/functions/handle-checkout/index.ts")
+  assert.match(layout, /process\.env\.CUSTOMER_VARIANT_CHECKOUT_ENABLED/u)
+  assert.doesNotMatch(layout, /NEXT_PUBLIC_CUSTOMER_VARIANT_CHECKOUT_ENABLED/u)
+  assert.match(sidebar, /variantCheckoutEnabled=\{variantCheckoutEnabled\}/u)
+  assert.match(modal, /prepareCheckoutSeparation\([\s\S]*variantCheckoutEnabled/u)
+  assert.match(edge, /const VARIANT_CHECKOUT_ENABLED = false/u)
+  assert.match(edge, /if \(!variantCheckoutAllowed\(items\)\)/u)
+})
+
+test("gate ON prepares exact variant and mixed payloads without display authority", () => {
+  const first = variantItem({ quantity: 2 })
+  const second = variantItem({ variantId: ids.variantB, valueId: ids.valueB })
+  const variants = checkoutSeparation.prepareCheckoutSeparation([first, second], true)
+  assert.equal(variants.status, "variant")
+  assert.deepEqual(variants.requestItems, [
+    { product_id: ids.productA, product_variant_id: ids.variantA, quantity: 2 },
+    { product_id: ids.productA, product_variant_id: ids.variantB, quantity: 1 },
+  ])
+  const mixed = checkoutSeparation.prepareCheckoutSeparation([
+    ordinaryItem(ids.productB), first,
+  ], true)
+  assert.equal(mixed.status, "variant")
+  assert.deepEqual(mixed.requestItems, [
+    { product_id: ids.productB, quantity: 2 },
+    { product_id: ids.productA, product_variant_id: ids.variantA, quantity: 2 },
+  ])
+  assert.doesNotMatch(JSON.stringify(mixed.requestItems), /price|stock|label|vendor_id/u)
+  assert.equal(evaluateOrdinaryCartCheckout([first, second], true, "healthy", true).eligible, true)
+  assert.equal(evaluateOrdinaryCartCheckout([ordinaryItem(ids.productB), first], true, "healthy", true).eligible, true)
+  assert.equal(evaluateOrdinaryCartCheckout([first], true, "healthy").reason, "VARIANT_UNSUPPORTED")
+})
+
+test("invalid or ambiguous variant identity never produces a checkout request", () => {
+  const base = variantItem()
+  const badLines = [
+    { ...base, variant: { ...base.variant, variant_id: undefined } },
+    { ...base, cartLineId: `variant:${ids.productA}:${ids.variantB}` },
+    { ...base, variant: { ...base.variant, product_id: ids.productB } },
+    { ...base, variant: { ...base.variant, selected_options: [] } },
+  ]
+  for (const line of badLines) {
+    assertContained(checkoutSeparation.prepareCheckoutSeparation([line], true), "INVALID_ITEM")
+    assert.equal(evaluateOrdinaryCartCheckout([line], true, "healthy", true).eligible, false)
+  }
+  assertContained(checkoutSeparation.prepareCheckoutSeparation([base, base], true), "DUPLICATE_IDENTITY")
+})
+
+test("variant fingerprints are stable, distinct, and ordinary bytes unchanged", () => {
+  const first = variantItem()
+  const second = variantItem({ variantId: ids.variantB, valueId: ids.valueB })
+  const firstFingerprint = paymentRecovery.createCartFingerprint([first])
+  assert.equal(firstFingerprint, checkoutSeparation.prepareCheckoutSeparation([first], true).fingerprint)
+  assert.notEqual(firstFingerprint, paymentRecovery.createCartFingerprint([second]))
+  assert.equal(firstFingerprint, paymentRecovery.createCartFingerprint([
+    variantItem({ productName: "Updated display", valueLabel: "Other label", price: 1, stock: 1 }),
+  ]))
+  assert.equal(paymentRecovery.createCartFingerprint([first, second]), paymentRecovery.createCartFingerprint([second, first]))
+  assert.equal(paymentRecovery.createCartFingerprint([ordinaryItem(ids.productB), first]), paymentRecovery.createCartFingerprint([first, ordinaryItem(ids.productB)]))
+  const ordinary = ordinaryItem()
+  assert.equal(paymentRecovery.createCartFingerprint([ordinary]), checkoutSeparation.createOrdinaryCartFingerprint([ordinary]))
+  assert.equal(paymentRecovery.createCartFingerprint([]), "[]")
+})
+
+test("variant checkout attempts reuse only matching identity; stale carts survive recovery", () => {
+  const originalSessionStorage = globalThis.sessionStorage
+  globalThis.sessionStorage = createSessionStorage()
+  try {
+    const firstFingerprint = paymentRecovery.createCartFingerprint([variantItem()])
+    const secondFingerprint = paymentRecovery.createCartFingerprint([
+      variantItem({ variantId: ids.variantB, valueId: ids.valueB }),
+    ])
+    const firstAttempt = paymentRecovery.obtainCheckoutAttempt(firstFingerprint)
+    assert.equal(paymentRecovery.obtainCheckoutAttempt(firstFingerprint).checkout_attempt_id, firstAttempt.checkout_attempt_id)
+    assert.notEqual(paymentRecovery.obtainCheckoutAttempt(secondFingerprint).checkout_attempt_id, firstAttempt.checkout_attempt_id)
+    const pending = {
+      order_id: ids.order,
+      reference: "marketa_variant_test",
+      cart_fingerprint: firstFingerprint,
+      created_at: new Date().toISOString(),
+    }
+    assert.equal(paymentRecovery.pendingCheckoutMatchesCart(pending, secondFingerprint), false)
+    assert.equal(paymentRecovery.pendingCheckoutMatchesCart(pending, firstFingerprint), true)
+  } finally {
+    globalThis.sessionStorage = originalSessionStorage
+  }
+})
+
+test("confirmed variant payment clears only the matching persisted cart", async () => {
+  const values = new Map()
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  }
+  const controller = cartStorage.createCartPersistStorage({ getStorage: () => storage })
+  const store = createCartStore({ controller, skipHydration: true })
+  await store.persist.rehydrate()
+  assert.equal(store.getState().addItem(variantItem()), "applied")
+  const pending = {
+    order_id: ids.order,
+    reference: "marketa_variant_test",
+    cart_fingerprint: paymentRecovery.createCartFingerprint(store.getState().items),
+    created_at: new Date().toISOString(),
+  }
+  assert.equal(store.getState().addItem(variantItem({ variantId: ids.variantB, valueId: ids.valueB })), "applied")
+  const changedFingerprint = paymentRecovery.createCartFingerprint(store.getState().items)
+  assert.equal(paymentRecovery.pendingCheckoutMatchesCart(pending, changedFingerprint), false)
+  assert.equal(store.getState().items.length, 2)
+  assert.equal(store.getState().removeItem(`variant:${ids.productA}:${ids.variantB}`), "applied")
+  const restoredFingerprint = paymentRecovery.createCartFingerprint(store.getState().items)
+  assert.equal(paymentRecovery.pendingCheckoutMatchesCart(pending, restoredFingerprint), true)
+  assert.equal(controller.health.getSnapshot().status, "healthy")
+  assert.equal(store.getState().clearCart(), "applied")
+  assert.deepEqual(store.getState().items, [])
+  assert.deepEqual(JSON.parse(values.get(cartStorage.CART_STORAGE_KEY)).state.items, [])
 })

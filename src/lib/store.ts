@@ -55,6 +55,7 @@ export type CartCheckoutBlockReason =
   | "UNKNOWN_KIND"
   | "INVALID_ITEM"
   | "DUPLICATE_PRODUCT"
+  | "DUPLICATE_IDENTITY"
   | "INVALID_TOTAL"
 
 export type CartCheckoutEvaluation =
@@ -172,7 +173,8 @@ export function calculateCartTotal(items: unknown): CartTotalResult {
 export function evaluateOrdinaryCartCheckout(
   items: unknown,
   hasHydrated: boolean,
-  persistenceStatus: CartPersistenceStatus
+  persistenceStatus: CartPersistenceStatus,
+  variantCheckoutEnabled = false
 ): CartCheckoutEvaluation {
   const total = calculateCartTotal(items)
 
@@ -192,18 +194,18 @@ export function evaluateOrdinaryCartCheckout(
     return { eligible: false, reason: "TOO_MANY_ITEMS", total }
   }
 
-  const productIds = new Set<string>()
+  const identityKeys = new Set<string>()
 
   for (const candidate of items) {
     if (!isRecord(candidate)) {
       return { eligible: false, reason: "UNKNOWN_KIND", total }
     }
 
-    if (candidate.kind === "variant") {
+    if (candidate.kind === "variant" && !variantCheckoutEnabled) {
       return { eligible: false, reason: "VARIANT_UNSUPPORTED", total }
     }
 
-    if (candidate.kind !== "ordinary") {
+    if (candidate.kind !== "ordinary" && candidate.kind !== "variant") {
       return { eligible: false, reason: "UNKNOWN_KIND", total }
     }
 
@@ -219,7 +221,7 @@ export function evaluateOrdinaryCartCheckout(
     if (
       normalized.length !== 1 ||
       !item ||
-      item.kind !== "ordinary" ||
+      item.kind !== candidate.kind ||
       !productId ||
       candidateProduct?.id !== productId ||
       candidate.cartLineId !== item.cartLineId ||
@@ -228,10 +230,17 @@ export function evaluateOrdinaryCartCheckout(
       return { eligible: false, reason: "INVALID_ITEM", total }
     }
 
-    if (productIds.has(productId)) {
-      return { eligible: false, reason: "DUPLICATE_PRODUCT", total }
+    const identityKey = item.kind === "variant"
+      ? item.cartLineId
+      : `ordinary:${productId}`
+    if (identityKeys.has(identityKey)) {
+      return {
+        eligible: false,
+        reason: item.kind === "variant" ? "DUPLICATE_IDENTITY" : "DUPLICATE_PRODUCT",
+        total,
+      }
     }
-    productIds.add(productId)
+    identityKeys.add(identityKey)
   }
 
   if (!total.valid) {

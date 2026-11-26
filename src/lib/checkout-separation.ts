@@ -1,6 +1,7 @@
 import { normalizeCartItemsV1 } from "@/lib/cart-model"
 import type {
   CheckoutIdentity,
+  CheckoutRequestItem,
   OrdinaryCheckoutIdentity,
   OrdinaryCheckoutRequestItem,
 } from "@/types"
@@ -24,6 +25,12 @@ export type CheckoutSeparationResult =
       fingerprint: string
     }
   | {
+      status: "variant"
+      identities: CheckoutIdentity[]
+      requestItems: CheckoutRequestItem[]
+      fingerprint: string
+    }
+  | {
       status: "contained"
       reason: CheckoutContainmentReason
       identities: CheckoutIdentity[]
@@ -43,6 +50,19 @@ function fingerprintOrdinaryItems(
   )
 }
 
+function fingerprintVariantItems(items: readonly CheckoutRequestItem[]): string {
+  return JSON.stringify(
+    [...items].sort((left, right) => {
+      const productOrder = left.product_id.localeCompare(right.product_id)
+      if (productOrder !== 0) return productOrder
+
+      const leftVariant = "product_variant_id" in left ? left.product_variant_id : ""
+      const rightVariant = "product_variant_id" in right ? right.product_variant_id : ""
+      return leftVariant.localeCompare(rightVariant)
+    })
+  )
+}
+
 function contained(
   reason: CheckoutContainmentReason,
   identities: CheckoutIdentity[] = []
@@ -51,11 +71,12 @@ function contained(
 }
 
 /**
- * Classifies every cart line and prepares the existing ordinary checkout
- * request without granting payment authority to persisted display snapshots.
+ * Prepares exact checkout identities without granting payment authority to
+ * persisted display snapshots. Variant requests require an explicit opt-in.
  */
 export function prepareCheckoutSeparation(
-  value: unknown
+  value: unknown,
+  variantCheckoutEnabled = false
 ): CheckoutSeparationResult {
   if (!Array.isArray(value) || value.length === 0) {
     return contained("EMPTY_CART")
@@ -116,8 +137,26 @@ export function prepareCheckoutSeparation(
     identities.push(identity)
   }
 
-  if (hasVariant) {
+  if (hasVariant && !variantCheckoutEnabled) {
     return contained(hasOrdinary ? "MIXED_CART" : "VARIANT_CART", identities)
+  }
+
+  if (hasVariant) {
+    const requestItems: CheckoutRequestItem[] = identities.map((identity) =>
+      identity.kind === "variant"
+        ? {
+            product_id: identity.product_id,
+            product_variant_id: identity.product_variant_id,
+            quantity: identity.quantity,
+          }
+        : { product_id: identity.product_id, quantity: identity.quantity }
+    )
+    return {
+      status: "variant",
+      identities,
+      requestItems,
+      fingerprint: fingerprintVariantItems(requestItems),
+    }
   }
 
   const ordinaryIdentities = identities as OrdinaryCheckoutIdentity[]

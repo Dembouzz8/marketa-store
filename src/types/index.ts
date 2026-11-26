@@ -247,6 +247,14 @@ export interface OrdinaryCheckoutRequestItem {
   quantity: number
 }
 
+export interface VariantCheckoutRequestItem extends OrdinaryCheckoutRequestItem {
+  product_variant_id: string
+}
+
+export type CheckoutRequestItem =
+  | OrdinaryCheckoutRequestItem
+  | VariantCheckoutRequestItem
+
 export interface CheckoutFormData {
   shipping_address: {
     address: string
@@ -263,6 +271,12 @@ export interface OrdinaryCheckoutPayload {
     city: string
     state: string
   }
+}
+
+export interface CheckoutPayload {
+  checkout_attempt_id: string
+  items: CheckoutRequestItem[]
+  shipping_address: OrdinaryCheckoutPayload["shipping_address"]
 }
 
 export type CheckoutErrorCode =
